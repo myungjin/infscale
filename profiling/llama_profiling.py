@@ -18,8 +18,8 @@ def bert_input_constructor(batch_size, seq_len, tokenizer, batch_num=1):
     return inputs
 
 with get_accelerator().device(0):
-    tokenizer = LlamaTokenizer.from_pretrained('openlm-research/open_llama_7b')
-    model = LlamaForCausalLM.from_pretrained('openlm-research/open_llama_7b', torch_dtype=torch.float16, device_map=0)
+    tokenizer = LlamaTokenizer.from_pretrained('openlm-research/open_llama_13b')
+    model = LlamaForCausalLM.from_pretrained('openlm-research/open_llama_13b', torch_dtype=torch.float16, device_map='auto')
     
     prompt = 'Q: What is the largest animal?\nA:'
     input = dict(tokenizer(prompt, return_tensors="pt"))
