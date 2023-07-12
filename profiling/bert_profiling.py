@@ -24,7 +24,6 @@ with get_accelerator().device(0):
     seq_len = 128
     enable_profile = True
     dataset = bert_input_constructor(batch_size, seq_len, tokenizer, batch_num=100)
-    print(dataset)
     if enable_profile:
       flops, macs, params = get_model_inference_profile(
           model,
