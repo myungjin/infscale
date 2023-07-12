@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import math
 import random
 import time
+import sys
 import statistics
 
 def get_leaf_modules(profiling_res: dict, leaf_module_name_list = None) -> list:
@@ -97,7 +98,14 @@ def plot_random_partition_std_dev_curve(leaf_layers, num_partition, num_rounds =
 
 if __name__ == "__main__":
     profiling_file = "llama13b_profile.json"
+    output_file = "partition_analysis.log"
     with open(profiling_file) as pf:
+        if output_file != None:
+            of = open(output_file, "w")
+            if of != None:
+                original_stdout = sys.stdout
+                sys.stdout = of
+
         profiling_res = json.load(pf)
         max_num_partition = 6
         leaf_layers = get_leaf_modules(profiling_res, leaf_module_name_list=["LlamaDecoderLayer"])
@@ -105,3 +113,7 @@ if __name__ == "__main__":
         print(leaf_layers.keys())
         # plot_min_std_dev_curve(leaf_layers, max_num_partition)
         plot_random_partition_std_dev_curve(leaf_layers, max_num_partition, 100)
+
+        if output_file != None and of != None:
+            sys.stdout = original_stdout
+            of.close()
