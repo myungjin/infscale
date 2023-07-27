@@ -233,19 +233,30 @@ image_h = 128
 
 def run_master(split_size, num_workers, shards):
 
+    file = open("./resnet50_extreme_uneven.csv", "a")
+    original_stdout = sys.stdout
+    sys.stdout = file
+
     model = RRDistResNet50(split_size, ["worker{}".format(i + 1) for i in range(num_workers)], ["cuda:{}".format(i) for i in range(4)], args=(), shards=shards)
 
     one_hot_indices = torch.LongTensor(batch_size) \
                            .random_(0, num_classes) \
                            .view(batch_size, 1)
 
-    # generating random inputs
+    # generating inputs
     inputs = torch.randn(batch_size, 3, image_w, image_h)
     labels = torch.zeros(batch_size, num_classes) \
                     .scatter_(1, one_hot_indices, 1)
     
+    print("{}".format(shards),end=", ")
+    tik = time.time()
     for i in range(num_batches):
         outputs = model(inputs)
+
+    tok = time.time()
+    print(f"{split_size}, {tok - tik}, {(num_batches * batch_size) / (tok - tik)}")
+
+    sys.stdout = original_stdout
 
 
 def run_worker(rank, world_size, num_split, shards):
@@ -288,6 +299,6 @@ if __name__=="__main__":
             tik = time.time()
             mp.spawn(run_worker, args=(world_size, num_split, shards), nprocs=world_size, join=True)
             tok = time.time()
-            print(f"size of micro-batches = {num_split}, execution time = {tok - tik} s, throughput = {(num_batches * batch_size) / (tok - tik)} samples/sec")
+            print(f"size of micro-batches = {num_split}, ebd-to-end execution time = {tok - tik} s")
 
     sys.stdout = original_stdout

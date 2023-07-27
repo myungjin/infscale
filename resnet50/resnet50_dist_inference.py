@@ -20,7 +20,7 @@ from torchvision.models.resnet import Bottleneck
 #           Define Model Parallel ResNet50              #
 #########################################################
 
-# In order to split the ResNet50 and place it on two different workers, we
+# In order to split the ResNet50 and place it on different pipeline stages, we
 # implement it in two model shards. The ResNetBase class defines common
 # attributes and methods shared by two shards. ResNetShard1 and ResNetShard2
 # contain two partitions of the model layers respectively.
@@ -135,63 +135,7 @@ class ResNetShard2(ResNetBase):
         with self._lock:
             out = self.fc(torch.flatten(self.seq(x), 1))
         return out.cpu()
-
-
-class DistResNet50(nn.Module):
-    """
-    Assemble two ResNet parts as an nn.Module and define pipelining logic
-    """
-    def __init__(self, split_size, workers, *args, **kwargs):
-        super(DistResNet50, self).__init__()
-
-        self.split_size = split_size
-
-        if "pre_trained" in kwargs and kwargs["pre_trained"] == True:
-            resnet50 = torch.hub.load('NVIDIA/DeepLearningExamples:torchhub', 'nvidia_resnet50', pretrained=True)
-            kwargs['conv1'] = resnet50._modules['conv1']
-            kwargs['bn1'] = resnet50._modules['bn1']
-            kwargs['relu'] = resnet50._modules['relu']
-            kwargs['maxpool'] = resnet50._modules['maxpool']
-            kwargs['avgpool'] = resnet50._modules['avgpool']
-            kwargs['fc'] = resnet50._modules['fc']
-            for i in range(4):
-                kwargs['seq{}'.format(i)] = resnet50._modules['layers']._modules[str(i)]
-
-        # Put the first part of the ResNet50 on workers[0]
-        self.p1_rref = rpc.remote(
-            workers[0],
-            ResNetShard1,
-            args = ("cuda:0",) + args,
-            kwargs = kwargs
-        )
-
-        # Put the second part of the ResNet50 on workers[1]
-        self.p2_rref = rpc.remote(
-            workers[1],
-            ResNetShard2,
-            args = ("cuda:1",) + args,
-            kwargs = kwargs
-        )
-
-    def forward(self, xs):
-        # Split the input batch xs into micro-batches, and collect async RPC
-        # futures into a list
-        out_futures = []
-        for x in iter(xs.split(self.split_size, dim=0)):
-            x_rref = RRef(x)
-            y_rref = self.p1_rref.remote().forward(x_rref)
-            z_fut = self.p2_rref.rpc_async().forward(y_rref)
-            out_futures.append(z_fut)
-
-        # collect and cat all output tensors into one tensor.
-        return torch.cat(torch.futures.wait_all(out_futures))
-
-    def parameter_rrefs(self):
-        remote_params = []
-        remote_params.extend(self.p1_rref.remote().parameter_rrefs().to_here())
-        remote_params.extend(self.p2_rref.remote().parameter_rrefs().to_here())
-        return remote_params
-    
+ 
 class RRDistResNet50(nn.Module):
     """
     Assemble two ResNet parts as an nn.Module and define pipelining logic
@@ -288,7 +232,10 @@ image_h = 128
 
 def run_master(split_size, num_workers, shards):
 
-    # model = DistResNet50(split_size, ["worker{}".format(i + 1) for i in range(num_workers)], args=(), pre_trained=True)
+    file = open("./resnet50_even.csv", "a")
+    original_stdout = sys.stdout
+    sys.stdout = file
+
     model = RRDistResNet50(split_size, ["worker{}".format(i + 1) for i in range(num_workers)], ["cuda:{}".format(i) for i in range(4)], args=(), shards=shards)
 
     one_hot_indices = torch.LongTensor(batch_size) \
@@ -300,8 +247,15 @@ def run_master(split_size, num_workers, shards):
     labels = torch.zeros(batch_size, num_classes) \
                     .scatter_(1, one_hot_indices, 1)
     
+    print("{}".format(shards),end=", ")
+    tik = time.time()
     for i in range(num_batches):
         outputs = model(inputs)
+
+    tok = time.time()
+    print(f"{split_size}, {tok - tik}, {(num_batches * batch_size) / (tok - tik)}")
+
+    sys.stdout = original_stdout
 
 
 def run_worker(rank, world_size, num_split, shards):
@@ -344,6 +298,6 @@ if __name__=="__main__":
             tik = time.time()
             mp.spawn(run_worker, args=(world_size, num_split, shards), nprocs=world_size, join=True)
             tok = time.time()
-            print(f"size of micro-batches = {num_split}, execution time = {tok - tik} s, throughput = {(num_batches * batch_size) / (tok - tik)} samples/sec")
+            print(f"size of micro-batches = {num_split}, end-to-end execution time = {tok - tik} s")
 
     sys.stdout = original_stdout
