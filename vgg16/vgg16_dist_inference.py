@@ -291,6 +291,6 @@ if __name__=="__main__":
             tik = time.time()
             mp.spawn(run_worker, args=(world_size, split_size, shards), nprocs=world_size, join=True)
             tok = time.time()
-            print(f"size of micro-batches = {split_size}, execution time = {tok - tik} s, throughput = {(num_batches * batch_size) / (tok - tik)} samples/sec")
+            print(f"size of micro-batches = {split_size}, end-to-end execution time = {tok - tik} s")
 
     sys.stdout = original_stdout
