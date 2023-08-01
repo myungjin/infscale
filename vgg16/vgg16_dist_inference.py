@@ -228,7 +228,7 @@ def run_master(split_size, num_workers, shards):
     original_stdout = sys.stdout
     sys.stdout = file
 
-    cuda_list = ["cuda:{}".format(i) for i in range(4)]
+    cuda_list = ["cuda:{}".format(i) for i in range(1, 4)]
     model = RRDistVGG16(split_size, ["worker{}".format(i + 1) for i in range(num_workers)], devices=cuda_list + cuda_list + cuda_list, shards=shards)
 
     one_hot_indices = torch.LongTensor(batch_size) \
@@ -283,7 +283,7 @@ if __name__=="__main__":
     file = open("./vgg16_mild_uneven.log", "w")
     original_stdout = sys.stdout
     sys.stdout = file
-    combo = [[1, 2, 3], [1, 1, 2, 3], [1, 1, 2, 2, 3]]
+    combo = [[1, 2, 3], [1, 1, 2, 3], [1, 1, 2, 2, 3], [1, 1, 2, 2, 3, 3]]
     for shards in combo:
         print("Placement:", shards)
         world_size = len(shards) + 1
