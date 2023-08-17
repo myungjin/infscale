@@ -5,10 +5,11 @@ import torch.multiprocessing as mp
 from torch.distributed.rpc import RRef
 import torch.distributed.rpc as rpc
 import threading
-from typing import List, Optional, Tuple, Union
+from typing import Iterator, List, Optional, Tuple, Union
 from functools import reduce
+from torch.nn.parameter import Parameter
 
-from transformers import BertTokenizer, BertModel
+from transformers import BertTokenizer, BertModel, BertForSequenceClassification
 from transformers.models.bert.modeling_bert import BertEmbeddings, BertPreTrainedModel, BertPooler, BertEncoder, BertLayer, BertConfig
 from transformers.models.bert.modeling_bert import BaseModelOutputWithPoolingAndCrossAttentions
 
@@ -104,7 +105,7 @@ def bert_input_constructor(batch_size, seq_len, tokenizer, batch_num=1):
 #   12: all_cross_attentions
 
 class BertShardBase(nn.Module):
-    def __init__(self, device, layers, *args, **kwargs):
+    def __init__(self, device, layers, index = None, *args, **kwargs):
         super(BertShardBase, self).__init__()
 
         self.lock = threading.Lock()
@@ -125,6 +126,22 @@ class BertShardBase(nn.Module):
         x = encode_tensors(x)
         return x
 
+    def parameter_rrefs(self):
+        r"""
+        Create one RRef for each parameter in the given local module, and return a
+        list of RRefs.
+        """
+        res = []
+        for l in self.layers:
+            res += l.parameter_rrefs()
+        return res
+
+    def parameter_list(self):
+        res = []
+        for l in self.layers:
+            res += l.parameter_list()
+        return res
+
 class BertEmbeddingLayer(nn.Module):
     def __init__(self, config, embedding = None, device = "cpu", *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -141,7 +158,10 @@ class BertEmbeddingLayer(nn.Module):
         Create one RRef for each parameter in the given local module, and return a
         list of RRefs.
         """
-        return [RRef(p) for p in self.embedding_module.parameters()]
+        return [RRef(p.cpu()) for p in self.embedding_module.parameters()]
+
+    def parameters(self, recurse: bool = True):
+        return self.embedding_module.parameters(recurse)
 
     def to(self, device):
         self.device = device
@@ -175,7 +195,10 @@ class BertPoolerLayer(nn.Module):
         Create one RRef for each parameter in the given local module, and return a
         list of RRefs.
         """
-        return [RRef(p) for p in self.pooler.parameters()]
+        return [RRef(p.cpu()) for p in self.pooler.parameters()]
+    
+    def parameters(self, recurse: bool = True):
+        return self.pooler.parameters(recurse)
 
     def forward(self, inputs) -> torch.Tensor:
         # We "pool" the model by simply taking the hidden state corresponding
@@ -207,7 +230,10 @@ class BertEncoderLayer(nn.Module):
         Create one RRef for each parameter in the given local module, and return a
         list of RRefs.
         """
-        return [RRef(p) for p in self.layer.parameters()]
+        return [RRef(p.cpu()) for p in self.layer.parameters()]
+
+    def parameters(self, recurse: bool = True):
+        return self.layer.parameters(recurse)
     
     def to(self, device):
         self.device = device
@@ -226,6 +252,9 @@ class BertEncoderLayer(nn.Module):
         all_hidden_states = inputs[10] if inputs[10] != None else None
         all_self_attentions = inputs[11] if inputs[11] != None else None
         all_cross_attentions = inputs[12] if inputs[12] != None else None
+
+        if self.index == 0 and all_hidden_states != None:
+            all_hidden_states = all_hidden_states + (inputs[4], )
 
         layer_outputs = self.layer(
             hidden_states,
@@ -287,7 +316,7 @@ class RRDistBertModel(BertPreTrainedModel):
             rref = rpc.remote(
                 workers[i],
                 BertShardBase,
-                args = (devices[i], shard_layers, ) + args,
+                args = (devices[i], shard_layers, i) + args,
                 kwargs = kwargs
             )
             self.shards_ref[shard_id].append(rref)
@@ -393,7 +422,8 @@ class RRDistBertModel(BertPreTrainedModel):
 
             inputs = (input_ids_split, token_type_ids_split, position_ids_split, inputs_embeds_split, None, None, extended_attention_mask_split, head_mask_split, encoder_hidden_states_split, encoder_extended_attention_mask_split, None, None, None)
 
-            x_rref = RRef(encode_tensors(inputs))
+            temp = encode_tensors(inputs)
+            x_rref = RRef(temp)
 
             for i in range(len(self.shards_ref) - 1):
                 x_rref = self.shards_ref[i][spin_pointers[i]].remote().forward(x_rref)
@@ -432,6 +462,25 @@ class RRDistBertModel(BertPreTrainedModel):
             cross_attentions=outputs[4],
         )
 
+    def parameter_list(self):
+        res = []
+        for i in range(len(self.shards_ref)):
+            res += [p.to_here() for p in self.shards_ref[i][0].rpc_sync().parameter_rrefs()]
+        
+        return res
+    
+    def verify_parameter_consistency(self):
+        for i in range(len(self.shards_ref)):
+            for j in range(1, len(self.shards_ref[i])):
+                base = [p.to_here() for p in self.shards_ref[i][0].rpc_sync().parameter_rrefs()]
+                cmp = [p.to_here() for p in self.shards_ref[i][j].rpc_sync().parameter_rrefs()]
+
+                for k in range(len(base)):
+                    if torch.all(base[k] != cmp[k]):
+                        return False
+
+        return True
+    
 #########################################################
 #                   Run RPC Processes                   #
 #########################################################
@@ -445,20 +494,22 @@ def run_master(inputs, split_size, num_workers, partitions, shards, pre_trained 
     config = BertConfig()
     if pre_trained == True:
         # TODO: load pre_trained model
-        net = None
+        net = BertModel.from_pretrained("bert-base-uncased")
     else:
         net = BertModel(config)
     net.eval()
-
-    print("Inputs:", inputs)
     
     layers = [
-        BertEmbeddingLayer(config),
-        *[BertEncoderLayer(config, i) for i in range(n_layers)],
-        BertPoolerLayer(config)
+        BertEmbeddingLayer(config, embedding=net.embeddings),
+        *[BertEncoderLayer(config, i, encoder=net.encoder.layer[i]) for i in range(n_layers)],
+        BertPoolerLayer(config, pooler=net.pooler)
     ]
+
     device_list = ["cuda:{}".format(i) for i in range(1, 4)]
     model = RRDistBertModel(config, split_size, ["worker{}".format(i + 1) for i in range(num_workers)], layers, partitions, shards, devices=device_list + device_list)
+    if not model.verify_parameter_consistency():
+        print("Parameters not consistent!", flush=True)
+        return
 
     file = open("./bert_mild_uneven.csv", "a")
     original_stdout = sys.stdout
@@ -474,10 +525,6 @@ def run_master(inputs, split_size, num_workers, partitions, shards, pre_trained 
 
     sys.stdout = original_stdout
 
-    baseline_output = net(**inputs)
-    print("Outputs:", outputs)
-    print("Baseline Outputs:", baseline_output)
-
 def run_worker(rank, world_size, inputs, split_size, partitions, placement):
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '29500'
@@ -492,7 +539,7 @@ def run_worker(rank, world_size, inputs, split_size, partitions, placement):
             world_size=world_size,
             rpc_backend_options=options
         )
-        run_master(inputs, split_size, num_workers=world_size - 1, partitions=partitions, shards=placement)
+        run_master(inputs, split_size, num_workers=world_size - 1, partitions=partitions, shards=placement, pre_trained=True)
     else:
         rpc.init_rpc(
             f"worker{rank}",
@@ -511,8 +558,8 @@ if __name__=="__main__":
     open("./bert_mild_uneven.csv", "w") # flush the csv file
     original_stdout = sys.stdout
     sys.stdout = file
-    layer_partitions = [5, 10]
-    combo = [[1, 2, 3]]
+    layer_partitions = [10]
+    combo = [[1, 2], [1, 1, 2], [1, 1, 2, 2], [1, 2, 2]]
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
     for placement in combo:
@@ -521,7 +568,6 @@ if __name__=="__main__":
         for split_size in [1, 2, 4, 8]:
             # generate input
             inputs = bert_input_constructor(batch_size, seq_len, tokenizer)
-            print(inputs)
 
             # run inference process
             tik = time.time()
