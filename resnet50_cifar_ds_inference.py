@@ -184,7 +184,7 @@ def train_pipe(args, part='parameters'):
     tik = time.time()
     data_iter = iter(RepeatingLoader(dataloader))
     for i in range(args.steps):
-        loss = engine.eval_batch(data_iter)
+        loss = engine.eval_batch(data_iter, compute_loss=False)
     tok = time.time()
     print(f"{tok - tik}, {(args.steps * engine.train_batch_size()) / (tok - tik)}")
 
