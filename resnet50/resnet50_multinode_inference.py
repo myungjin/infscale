@@ -116,6 +116,7 @@ if __name__=="__main__":
     world_size = int(os.environ['WORLD_SIZE'])
     logfile = open(f"{rank}-proc.log", "w")
 
+    print("Rank: {}, World size: {}".format(rank, world_size), file=logfile, flush=True)
     parser = argparse.ArgumentParser()
     parser.add_argument('partitions', type=str)
     parser.add_argument('shards', type=str)
