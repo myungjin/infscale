@@ -13,6 +13,30 @@ llama/ -- the directory that holds the scripts to run Llama inference and profil
 profiling/ -- the directory that holds the scripts to do profiling for ML models.
 ```
 
+## Installation
+
+```
+pip install -r requirements.txt
+```
+
+If there is the following error related to mpi, openmpi package needs to be installed and its path needs to be configured correctly.
+```
+      _configtest.c:2:10: fatal error: mpi.h: No such file or directory
+       #include <mpi.h>
+                ^~~~~~~
+      compilation terminated.
+      failure.
+      removing: _configtest.c _configtest.o
+      error: Cannot compile MPI programs. Check your configuration!!!
+```
+
+To install openmpi on Amazon Linux 2 or Centos,
+```
+sudo yum install openmpi
+```
+
+Then, add `/usr/lib64/openmpi/bin` to PATh environment variable.
+
 ## PyTorch RPC-based implementation of LLM pipeline
 A prototype implementation that uses [PyTorch RPC](https://pytorch.org/docs/stable/rpc.html) as the communication framework to construct a pipeline for ML models.
 The *pipeline* is abstracted as a new ML model that wraps the original ML model and follows the original computation logic, but it uses a different computation process and aims to achieve better throughput in terms of samples processed per second.
