@@ -8,7 +8,7 @@ placements:
   - 2
 micro_batch_size: 8
 pre_trained: 'True'
-logging: 'False'
+logging: 'True'
 devices:
 - cuda:0
 - cuda:1
