@@ -71,14 +71,14 @@ class CNNShardBase(nn.Module):
         """Initialize the class."""
         super().__init__()
 
-        self.layers = [
-            m.to(device) if isinstance(m, nn.Module) else m for m in layers
-        ]
+        self.layers = [m.to(device) if isinstance(m, nn.Module) else m for m in layers]
         self.device = device
-        self.shard_index = kwargs[
-            "sid"] if "sid" in kwargs else None  # index of the shard in the global set of shards
-        self.partition_index = kwargs[
-            "pid"] if "pid" in kwargs else None  # index of the partition of layers beared by this shard
+        self.shard_index = (
+            kwargs["sid"] if "sid" in kwargs else None
+        )  # index of the shard in the global set of shards
+        self.partition_index = (
+            kwargs["pid"] if "pid" in kwargs else None
+        )  # index of the partition of layers beared by this shard
 
         logger_name = f"shard-sid{self.shard_index}-pid{self.partition_index}"
         self.logger = get_logger(logger_name)
@@ -93,10 +93,12 @@ class CNNShardBase(nn.Module):
         self.receive_ranks = dict()
         self.send_ranks = dict()
         self.send_lock = threading.Lock()
-        self.control_channel_tag = kwargs[
-            "control_channel"] if "control_channel" in kwargs else 0
-        self.data_channel_tag = kwargs[
-            "data_channel"] if "data_channel" in kwargs else 1
+        self.control_channel_tag = (
+            kwargs["control_channel"] if "control_channel" in kwargs else 0
+        )
+        self.data_channel_tag = (
+            kwargs["data_channel"] if "data_channel" in kwargs else 1
+        )
         self.receive_queue = Queue()
         self.stopFlag = False
 
@@ -111,7 +113,7 @@ class CNNShardBase(nn.Module):
         self.logger.debug(
             f"Forward Pass: {self.forward_times}, Data Processing Time: {t2 - t1}s"
         )
-        self.accumulated_processing_time += (t2 - t1)
+        self.accumulated_processing_time += t2 - t1
 
         return x
 
@@ -148,7 +150,7 @@ class CNNShardBase(nn.Module):
         """Add a number of shards bearing the downstream stage as destination processes to send output tensors."""
         for rank in ranks:
             if rank not in self.send_ranks:
-                thread = threading.Thread(target=self._send_to, args=(rank, ))
+                thread = threading.Thread(target=self._send_to, args=(rank,))
                 self.send_ranks[rank] = (thread, Queue())
                 thread.start()
                 self.logger.debug(f"Add send rank: {rank}")
@@ -157,8 +159,7 @@ class CNNShardBase(nn.Module):
         """Add a number of shards bearing the upstream stage as source processes to receive input tensors"""
         for rank in ranks:
             if rank not in self.receive_ranks:
-                thread = threading.Thread(target=self._recv_from,
-                                          args=(rank, ))
+                thread = threading.Thread(target=self._recv_from, args=(rank,))
                 self.receive_ranks[rank] = thread
                 thread.start()
                 self.logger.debug(f"Add receive rank: {rank}")
@@ -194,9 +195,9 @@ class CNNShardBase(nn.Module):
                 break
 
         self.logger.debug(
-            f"Encounter 3 consecutive failures when sending to process {dst}")
-        self.logger.debug(
-            f"Shut down the thread sending data to process {dst}")
+            f"Encounter 3 consecutive failures when sending to process {dst}"
+        )
+        self.logger.debug(f"Shut down the thread sending data to process {dst}")
 
         self.send_ranks.pop(dst)
         del sq
@@ -235,17 +236,18 @@ class CNNPipelineCollector:
 
         self.receive_ranks = dict()
         self.receive_queue = Queue()
-        self.control_channel_tag = kwargs[
-            "control_channel"] if "control_channel" in kwargs else 0
-        self.data_channel_tag = kwargs[
-            "data_channel"] if "data_channel" in kwargs else 1
+        self.control_channel_tag = (
+            kwargs["control_channel"] if "control_channel" in kwargs else 0
+        )
+        self.data_channel_tag = (
+            kwargs["data_channel"] if "data_channel" in kwargs else 1
+        )
 
     def add_receive_ranks(self, ranks):
         """Add a number of shards bearing the upstream stage as source processes to receive input tensors"""
         for rank in ranks:
             if rank not in self.receive_ranks:
-                thread = threading.Thread(target=self._recv_from,
-                                          args=(rank, ))
+                thread = threading.Thread(target=self._recv_from, args=(rank,))
                 self.receive_ranks[rank] = thread
                 thread.start()
                 self.logger.debug(f"Add receive rank: {rank}")
@@ -284,8 +286,18 @@ class CNNPipeline(nn.Module):
     Use round-robin to schedule workload across replicas
     """
 
-    def __init__(self, split_size, workers, layers, partitions, shards,
-                 devices, backend, *args, **kwargs):
+    def __init__(
+        self,
+        split_size,
+        workers,
+        layers,
+        partitions,
+        shards,
+        devices,
+        backend,
+        *args,
+        **kwargs,
+    ):
         super().__init__()
 
         self.control_channel_tag = 0
@@ -296,18 +308,18 @@ class CNNPipeline(nn.Module):
         self.collector = CNNPipelineCollector(
             log_en=kwargs["logging"] if "logging" in kwargs else False,
             args=(),
-            kwargs=kwargs)
+            kwargs=kwargs,
+        )
 
         layer_partitions = []
         partitions = [0] + partitions + [len(layers)]
         for i in range(len(partitions) - 1):
-            layer_partitions.append(layers[partitions[i]:partitions[i + 1]])
+            layer_partitions.append(layers[partitions[i] : partitions[i + 1]])
 
         assert len(workers) >= len(shards)
         assert len(devices) >= len(shards)
         self.shards_refs = [[] for i in range(len(layer_partitions))]
-        self.shards_ranks = [[0]] + [[] for i in range(len(layer_partitions))
-                                     ] + [[0]]
+        self.shards_ranks = [[0]] + [[] for i in range(len(layer_partitions))] + [[0]]
 
         # place shards according to configuration
         for i in range(len(shards)):
@@ -316,13 +328,16 @@ class CNNPipeline(nn.Module):
             shard_layers = layer_partitions[partition_id]
             kwargs["pid"] = partition_id + 1
             kwargs["sid"] = i
-            rref = rpc.remote(workers[i],
-                              CNNShardBase,
-                              args=(
-                                  devices[i],
-                                  shard_layers,
-                              ) + args,
-                              kwargs=kwargs)
+            rref = rpc.remote(
+                workers[i],
+                CNNShardBase,
+                args=(
+                    devices[i],
+                    shard_layers,
+                )
+                + args,
+                kwargs=kwargs,
+            )
             self.shards_refs[partition_id].append(rref)
             self.shards_ranks[partition_id + 1].append(rank)
 
@@ -348,8 +363,7 @@ class CNNPipeline(nn.Module):
                 t = t.to(self.buffer_device)
             p = p % len(self.shards_ranks[1])
 
-            send_tensor(index, t, self.shards_ranks[1][p],
-                        self.data_channel_tag)
+            send_tensor(index, t, self.shards_ranks[1][p], self.data_channel_tag)
             p += 1
 
         res = self.collector.get_res(len(mini_batches))
@@ -389,17 +403,21 @@ dtype2int_map = {
     torch.int8: 2,
     torch.int16: 3,
     torch.int32: 4,
-    torch.int64: 5
+    torch.int64: 5,
 }
 int2dtype_map = [
-    torch.float, torch.double, torch.int8, torch.int16, torch.int32,
-    torch.int64
+    torch.float,
+    torch.double,
+    torch.int8,
+    torch.int16,
+    torch.int32,
+    torch.int64,
 ]
 
 
 def encode_tensors(
-    tensors: Union[List[torch.Tensor],
-                   Tuple[torch.Tensor]]) -> torch.FloatTensor:
+    tensors: Union[List[torch.Tensor], Tuple[torch.Tensor]]
+) -> torch.FloatTensor:
     tensor_num = len(tensors)
     ttype = torch.float
 
@@ -410,8 +428,7 @@ def encode_tensors(
             ts = list(t.shape)
             td = len(ts)
             tdtype = dtype2int_map[t.dtype]
-            res = torch.cat((res, torch.tensor([tdtype, td] + ts,
-                                               dtype=ttype)))
+            res = torch.cat((res, torch.tensor([tdtype, td] + ts, dtype=ttype)))
             res = torch.cat((res, t.to(ttype).view(-1)))
         else:
             res = torch.cat((res, torch.tensor([-1], dtype=ttype)))
@@ -419,8 +436,9 @@ def encode_tensors(
     return res
 
 
-def decode_tensors(encoded_data: torch.FloatTensor,
-                   logFile=sys.stderr) -> List[torch.Tensor]:
+def decode_tensors(
+    encoded_data: torch.FloatTensor, logFile=sys.stderr
+) -> List[torch.Tensor]:
     tensor_num = int(encoded_data[0])
 
     # decode tensor data from the second cell
@@ -435,12 +453,14 @@ def decode_tensors(encoded_data: torch.FloatTensor,
         tensor_dtype = int2dtype_map[tensor_dtype_index]
 
         tensor_dim = int(encoded_data[datap + 1])
-        tensor_shape = encoded_data[datap + 2:datap +
-                                    (2 + tensor_dim)].int().tolist()
-        datap += (2 + tensor_dim)
+        tensor_shape = encoded_data[datap + 2 : datap + (2 + tensor_dim)].int().tolist()
+        datap += 2 + tensor_dim
         tensor_size = reduce(lambda x, y: x * y, tensor_shape)
-        tensor = encoded_data[datap:datap +
-                              tensor_size].view(tensor_shape).to(tensor_dtype)
+        tensor = (
+            encoded_data[datap : datap + tensor_size]
+            .view(tensor_shape)
+            .to(tensor_dtype)
+        )
         datap += tensor_size
         res.append(tensor)
 
@@ -451,7 +471,7 @@ def merge_tupled_tensors(tlist: list):
     # tlist is a list of tuples of tensors that have the same number of cells
     out = tuple()
     for i in range(len(tlist[0])):
-        out = out + (torch.cat([x[i] for x in tlist]), )
+        out = out + (torch.cat([x[i] for x in tlist]),)
     return out
 
 
@@ -461,7 +481,6 @@ def merge_tupled_tensors(tlist: list):
 
 
 class TransformerShardBase(nn.Module):
-
     def __init__(self, device, layers, *args, **kwargs):
         super().__init__()
 
@@ -469,10 +488,12 @@ class TransformerShardBase(nn.Module):
         self.layers = [m.to(device) for m in layers]
         self.device = device
 
-        self.shard_index = kwargs[
-            "sid"] if "sid" in kwargs else None  # index of the shard in the global set of shards
-        self.partition_index = kwargs[
-            "pid"] if "pid" in kwargs else None  # index of the partition of layers beared by this shard
+        self.shard_index = (
+            kwargs["sid"] if "sid" in kwargs else None
+        )  # index of the shard in the global set of shards
+        self.partition_index = (
+            kwargs["pid"] if "pid" in kwargs else None
+        )  # index of the partition of layers beared by this shard
 
         logger_name = f"shard-sid{self.shard_index}-pid{self.partition_index}"
         self.logger = get_logger(logger_name)
@@ -521,13 +542,24 @@ class RR_TransformerPipeline(PreTrainedModel):
     `add_cross_attention` set to `True`; an `encoder_hidden_states` is then expected as an input to the forward pass.
     """
 
-    def __init__(self, config, split_size, workers, layers, partitions, shards,
-                 devices, *args, **kwargs):
+    def __init__(
+        self,
+        config,
+        split_size,
+        workers,
+        layers,
+        partitions,
+        shards,
+        devices,
+        *args,
+        **kwargs,
+    ):
         super().__init__(config, args, kwargs)
         self.config = config
         self.split_size = split_size
-        self.output_handler = kwargs[
-            "output_handler"] if "output_handler" in kwargs else None
+        self.output_handler = (
+            kwargs["output_handler"] if "output_handler" in kwargs else None
+        )
 
         assert len(workers) >= len(shards)
         assert len(workers) <= len(devices)
@@ -535,9 +567,8 @@ class RR_TransformerPipeline(PreTrainedModel):
         layer_partitions = []
         partitions = [0] + partitions + [len(layers)]
         for i in range(len(partitions) - 1):
-            if len(layers[partitions[i]:partitions[i + 1]]) > 0:
-                layer_partitions.append(layers[partitions[i]:partitions[i +
-                                                                        1]])
+            if len(layers[partitions[i] : partitions[i + 1]]) > 0:
+                layer_partitions.append(layers[partitions[i] : partitions[i + 1]])
 
         self.shards_ref = [[] for i in range(len(layer_partitions))]
         # place shards according to configuration
@@ -545,30 +576,35 @@ class RR_TransformerPipeline(PreTrainedModel):
             partition_id = shards[i] - 1
             shard_layers = layer_partitions[partition_id]
             print("--------------------------------")
-            print("Starting {} with shard_id:{}".format(
-                workers[i], partition_id),
-                  flush=True)
-            rref = rpc.remote(workers[i],
-                              TransformerShardBase,
-                              args=(devices[i], shard_layers, i) + args,
-                              kwargs=kwargs)
+            print(
+                "Starting {} with shard_id:{}".format(workers[i], partition_id),
+                flush=True,
+            )
+            rref = rpc.remote(
+                workers[i],
+                TransformerShardBase,
+                args=(devices[i], shard_layers, i) + args,
+                kwargs=kwargs,
+            )
             self.shards_ref[partition_id].append(rref)
 
-    def forward(self,
-                input_ids: Optional[torch.Tensor] = None,
-                attention_mask: Optional[torch.Tensor] = None,
-                token_type_ids: Optional[torch.Tensor] = None,
-                position_ids: Optional[torch.Tensor] = None,
-                head_mask: Optional[torch.Tensor] = None,
-                inputs_embeds: Optional[torch.Tensor] = None,
-                encoder_hidden_states: Optional[torch.Tensor] = None,
-                encoder_attention_mask: Optional[torch.Tensor] = None,
-                past_key_values: Optional[List[torch.Tensor]] = None,
-                output_attentions: Optional[bool] = None,
-                output_hidden_states: Optional[bool] = None,
-                return_dict: Optional[bool] = None,
-                use_cache: Optional[bool] = None,
-                output_handler: Optional[Callable] = None):
+    def forward(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        token_type_ids: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.Tensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        encoder_attention_mask: Optional[torch.Tensor] = None,
+        past_key_values: Optional[List[torch.Tensor]] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        use_cache: Optional[bool] = None,
+        output_handler: Optional[Callable] = None,
+    ):
         r"""
         encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
             Sequence of hidden-states at the output of the last layer of the encoder. Used in the cross-attention if
@@ -598,8 +634,7 @@ class RR_TransformerPipeline(PreTrainedModel):
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
         else:
-            raise ValueError(
-                "You have to specify either input_ids or inputs_embeds")
+            raise ValueError("You have to specify either input_ids or inputs_embeds")
 
         batch_size, seq_length = input_shape
         device = input_ids.device if input_ids is not None else inputs_embeds.device
@@ -610,42 +645,63 @@ class RR_TransformerPipeline(PreTrainedModel):
         for p in range(0, batch_size, self.split_size):
             # process one micro-batch at an iteration
             # split the input along the dimension
-            input_ids_split = input_ids[p:p + self.split_size]
-            token_type_ids_split = token_type_ids[
-                p:p + self.split_size] if token_type_ids is not None else None
-            position_ids_split = position_ids[
-                p:p + self.split_size] if position_ids is not None else None
-            inputs_embeds_split = inputs_embeds[
-                p:p + self.split_size] if inputs_embeds is not None else None
-            attention_mask_split = attention_mask[p:p + self.split_size]
+            input_ids_split = input_ids[p : p + self.split_size]
+            token_type_ids_split = (
+                token_type_ids[p : p + self.split_size]
+                if token_type_ids is not None
+                else None
+            )
+            position_ids_split = (
+                position_ids[p : p + self.split_size]
+                if position_ids is not None
+                else None
+            )
+            inputs_embeds_split = (
+                inputs_embeds[p : p + self.split_size]
+                if inputs_embeds is not None
+                else None
+            )
+            attention_mask_split = attention_mask[p : p + self.split_size]
             # TODO: How should we handle head_mask
-            head_mask_split = head_mask[:][
-                p:p + self.split_size] if head_mask is not None else None
-            encoder_hidden_states_split = encoder_hidden_states[
-                p:p +
-                self.split_size] if encoder_hidden_states is not None else None
-            encoder_attention_mask_split = encoder_attention_mask[
-                p:p + self.
-                split_size] if encoder_attention_mask is not None else None
+            head_mask_split = (
+                head_mask[:][p : p + self.split_size] if head_mask is not None else None
+            )
+            encoder_hidden_states_split = (
+                encoder_hidden_states[p : p + self.split_size]
+                if encoder_hidden_states is not None
+                else None
+            )
+            encoder_attention_mask_split = (
+                encoder_attention_mask[p : p + self.split_size]
+                if encoder_attention_mask is not None
+                else None
+            )
 
-            inputs = (input_ids_split, token_type_ids_split,
-                      position_ids_split, inputs_embeds_split, None, None,
-                      attention_mask_split, head_mask_split,
-                      encoder_hidden_states_split,
-                      encoder_attention_mask_split, None, None, None)
+            inputs = (
+                input_ids_split,
+                token_type_ids_split,
+                position_ids_split,
+                inputs_embeds_split,
+                None,
+                None,
+                attention_mask_split,
+                head_mask_split,
+                encoder_hidden_states_split,
+                encoder_attention_mask_split,
+                None,
+                None,
+                None,
+            )
 
             temp = encode_tensors(inputs)
             x_rref = RRef(temp)
 
             for i in range(len(self.shards_ref) - 1):
-                x_rref = self.shards_ref[i][spin_pointers[i]].remote().forward(
-                    x_rref)
-                spin_pointers[i] = (spin_pointers[i] + 1) % len(
-                    self.shards_ref[i])
+                x_rref = self.shards_ref[i][spin_pointers[i]].remote().forward(x_rref)
+                spin_pointers[i] = (spin_pointers[i] + 1) % len(self.shards_ref[i])
 
             i = -1
-            z_fut = self.shards_ref[i][spin_pointers[i]].rpc_async().forward(
-                x_rref)
+            z_fut = self.shards_ref[i][spin_pointers[i]].rpc_async().forward(x_rref)
             spin_pointers[i] = (spin_pointers[i] + 1) % len(self.shards_ref[i])
             out_futures.append(z_fut)
 
@@ -656,13 +712,17 @@ class RR_TransformerPipeline(PreTrainedModel):
             outputs = (
                 torch.cat([x[4] for x in output_list]),  # last hidden states
                 torch.cat([x[5] for x in output_list])
-                if output_list[0][5] != None else None,  # pooled hidden states
+                if output_list[0][5] != None
+                else None,  # pooled hidden states
                 merge_tupled_tensors([x[10] for x in output_list])
-                if output_list[0][10] != None else None,  # all hidden states
+                if output_list[0][10] != None
+                else None,  # all hidden states
                 merge_tupled_tensors([x[11] for x in output_list])
-                if output_list[0][11] != None else None,  # attentions
+                if output_list[0][11] != None
+                else None,  # attentions
                 merge_tupled_tensors([x[12] for x in output_list])
-                if output_list[0][12] != None else None  # cross attentions
+                if output_list[0][12] != None
+                else None,  # cross attentions
             )
         elif output_handler != None:
             # customized handling process designed to incorporate flexible outputs from task-specific heads
@@ -677,8 +737,7 @@ class RR_TransformerPipeline(PreTrainedModel):
         res = []
         for i in range(len(self.shards_ref)):
             res += [
-                p.to_here()
-                for p in self.shards_ref[i][0].rpc_sync().parameter_rrefs()
+                p.to_here() for p in self.shards_ref[i][0].rpc_sync().parameter_rrefs()
             ]
 
         return res
@@ -690,12 +749,12 @@ class RR_TransformerPipeline(PreTrainedModel):
         for i in range(len(self.shards_ref)):
             for j in range(1, len(self.shards_ref[i])):
                 base = [
-                    p.to_here() for p in self.shards_ref[i]
-                    [0].rpc_sync().parameter_rrefs()
+                    p.to_here()
+                    for p in self.shards_ref[i][0].rpc_sync().parameter_rrefs()
                 ]
                 cmp = [
-                    p.to_here() for p in self.shards_ref[i]
-                    [j].rpc_sync().parameter_rrefs()
+                    p.to_here()
+                    for p in self.shards_ref[i][j].rpc_sync().parameter_rrefs()
                 ]
 
                 for k in range(len(base)):
@@ -704,12 +763,14 @@ class RR_TransformerPipeline(PreTrainedModel):
 
         return True
 
-    def prepare_inputs_for_generation(self,
-                                      input_ids,
-                                      past_key_values=None,
-                                      attention_mask=None,
-                                      inputs_embeds=None,
-                                      **kwargs):
+    def prepare_inputs_for_generation(
+        self,
+        input_ids,
+        past_key_values=None,
+        attention_mask=None,
+        inputs_embeds=None,
+        **kwargs,
+    ):
         if past_key_values:
             input_ids = input_ids[:, -1:]
 
@@ -727,10 +788,12 @@ class RR_TransformerPipeline(PreTrainedModel):
         else:
             model_inputs = {"input_ids": input_ids}
 
-        model_inputs.update({
-            "position_ids": position_ids,
-            "past_key_values": past_key_values,
-            "use_cache": kwargs.get("use_cache"),
-            "attention_mask": attention_mask,
-        })
+        model_inputs.update(
+            {
+                "position_ids": position_ids,
+                "past_key_values": past_key_values,
+                "use_cache": kwargs.get("use_cache"),
+                "attention_mask": attention_mask,
+            }
+        )
         return model_inputs

@@ -10,7 +10,7 @@ os.makedirs(logfile_prefix)
 
 level = getattr(logging, os.getenv("LOG_LEVEL", "NOTSET"))
 formatter = logging.Formatter(
-    '%(asctime)s | %(filename)s:%(lineno)d | %(levelname)s | %(threadName)s | %(funcName)s | %(message)s'
+    "%(asctime)s | %(filename)s:%(lineno)d | %(levelname)s | %(threadName)s | %(funcName)s | %(message)s"
 )
 
 logger_registry = set()

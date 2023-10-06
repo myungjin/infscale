@@ -1,6 +1,7 @@
 import sys, os, json, yaml
 import time
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
@@ -8,19 +9,27 @@ from torch.distributed.rpc import RRef
 import torch.distributed.rpc as rpc
 from transformers import LlamaTokenizer, LlamaModel, LlamaConfig, LlamaForCausalLM
 from transformers.modeling_outputs import CausalLMOutputWithPast
-from transformers.models.llama.modeling_llama import LlamaRMSNorm, LlamaDecoderLayer as LDL, _make_causal_mask, _expand_mask
+from transformers.models.llama.modeling_llama import (
+    LlamaRMSNorm,
+    LlamaDecoderLayer as LDL,
+    _make_causal_mask,
+    _expand_mask,
+)
 
 sys.path.append(".")
 from inference_pipeline import RR_TransformerPipeline
 
+
 class LlamaEmbeddingLayer(nn.Module):
-    def __init__(self, config, embedding = None, device = "cpu", *args, **kwargs) -> None:
+    def __init__(self, config, embedding=None, device="cpu", *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.config = config
         self.device = device
 
         if embedding == None:
-            self.embedding_module = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx).to(device)
+            self.embedding_module = nn.Embedding(
+                config.vocab_size, config.hidden_size, self.padding_idx
+            ).to(device)
         else:
             self.embedding_module = embedding.to(device)
 
@@ -39,7 +48,9 @@ class LlamaEmbeddingLayer(nn.Module):
         self.embedding_module = self.embedding_module.to(device)
         return self
 
-    def _prepare_decoder_attention_mask(self, attention_mask, input_shape, inputs_embeds, past_key_values_length):
+    def _prepare_decoder_attention_mask(
+        self, attention_mask, input_shape, inputs_embeds, past_key_values_length
+    ):
         # create causal mask
         # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
         combined_attention_mask = None
@@ -53,18 +64,18 @@ class LlamaEmbeddingLayer(nn.Module):
 
         if attention_mask is not None:
             # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-            expanded_attn_mask = _expand_mask(attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]).to(
-                inputs_embeds.device
-            )
+            expanded_attn_mask = _expand_mask(
+                attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]
+            ).to(inputs_embeds.device)
             combined_attention_mask = (
-                expanded_attn_mask if combined_attention_mask is None else expanded_attn_mask + combined_attention_mask
+                expanded_attn_mask
+                if combined_attention_mask is None
+                else expanded_attn_mask + combined_attention_mask
             )
 
         return combined_attention_mask
 
-    def forward(self,
-        inputs
-        ):
+    def forward(self, inputs):
         input_ids = inputs[0].to(self.device) if inputs[0] != None else None
         attention_mask = inputs[6].to(self.device) if inputs[6] != None else None
 
@@ -84,11 +95,14 @@ class LlamaEmbeddingLayer(nn.Module):
         inputs[6] = attention_mask
         return inputs
 
+
 class LlamaNormLayer(nn.Module):
-    def __init__(self, config, norm = None, device = "cpu", *args, **kwargs) -> None:
+    def __init__(self, config, norm=None, device="cpu", *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         if norm == None:
-            self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps).to(device)
+            self.norm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps).to(
+                device
+            )
         else:
             self.norm = norm.to(device)
         self.device = device
@@ -99,7 +113,7 @@ class LlamaNormLayer(nn.Module):
         list of RRefs.
         """
         return [RRef(p.cpu()) for p in self.norm.parameters()]
-    
+
     def parameters(self, recurse: bool = True):
         return self.norm.parameters(recurse)
 
@@ -116,8 +130,11 @@ class LlamaNormLayer(nn.Module):
         self.norm = self.norm.to(device)
         return self
 
+
 class LlamaDecoderLayer(nn.Module):
-    def __init__(self, config, index, decoder = None, device = "cpu", *args, **kwargs) -> None:
+    def __init__(
+        self, config, index, decoder=None, device="cpu", *args, **kwargs
+    ) -> None:
         super().__init__(*args, **kwargs)
         # construct encoders
         self.config = config
@@ -137,12 +154,12 @@ class LlamaDecoderLayer(nn.Module):
 
     def parameters(self, recurse: bool = True):
         return self.layer.parameters(recurse)
-    
+
     def to(self, device):
         self.device = device
         self.layer = self.layer.to(device)
         return self
-    
+
     def forward(self, inputs):
         hidden_states = inputs[4].to(self.device) if inputs[4] != None else None
         attention_mask = inputs[6].to(self.device) if inputs[6] != None else None
@@ -151,7 +168,7 @@ class LlamaDecoderLayer(nn.Module):
         all_self_attentions = inputs[11] if inputs[11] != None else None
 
         if self.index == 0 and all_hidden_states != None:
-            all_hidden_states = all_hidden_states + (inputs[4], )
+            all_hidden_states = all_hidden_states + (inputs[4],)
 
         layer_outputs = self.layer(
             hidden_states,
@@ -170,14 +187,17 @@ class LlamaDecoderLayer(nn.Module):
 
         return inputs
 
+
 class LlamaLMHead(nn.Module):
-    def __init__(self, config, lm_head = None, device = "cpu", *args, **kwargs) -> None:
+    def __init__(self, config, lm_head=None, device="cpu", *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # construct encoders
         self.config = config
         self.device = device
         if lm_head == None:
-            self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False).to(self.device)
+            self.lm_head = nn.Linear(
+                config.hidden_size, config.vocab_size, bias=False
+            ).to(self.device)
         else:
             self.lm_head = lm_head.to(device)
 
@@ -199,51 +219,87 @@ class LlamaLMHead(nn.Module):
 
         return [None, logits, None, None, None]
 
+
 def lm_head_output_handler(output_list):
     outputs = (
-            torch.cat([x[0] for x in output_list]) if output_list[0][0] != None else None, # loss
-            torch.cat([x[1] for x in output_list]) if output_list[0][1] != None else None, # logits
-            torch.cat([x[2] for x in output_list]) if output_list[0][2] != None else None, # past key values
-            torch.cat([x[3] for x in output_list]) if output_list[0][3] != None else None, # hidden states
-            torch.cat([x[4] for x in output_list]) if output_list[0][4] != None else None, # attentions
-        )
-    
+        torch.cat([x[0] for x in output_list])
+        if output_list[0][0] != None
+        else None,  # loss
+        torch.cat([x[1] for x in output_list])
+        if output_list[0][1] != None
+        else None,  # logits
+        torch.cat([x[2] for x in output_list])
+        if output_list[0][2] != None
+        else None,  # past key values
+        torch.cat([x[3] for x in output_list])
+        if output_list[0][3] != None
+        else None,  # hidden states
+        torch.cat([x[4] for x in output_list])
+        if output_list[0][4] != None
+        else None,  # attentions
+    )
+
     return CausalLMOutputWithPast(
-            loss=outputs[0],
-            logits=outputs[1],
-            past_key_values=outputs[2],
-            hidden_states=outputs[3],
-            attentions=outputs[4],
-        )
+        loss=outputs[0],
+        logits=outputs[1],
+        past_key_values=outputs[2],
+        hidden_states=outputs[3],
+        attentions=outputs[4],
+    )
+
 
 num_batches = 10
 batch_size = 16
 seq_len = 128
 
-def run_master(inputs, split_size, num_workers, partitions, shards, devices, pre_trained = False, logging = False):
-    tokenizer = LlamaTokenizer.from_pretrained('openlm-research/open_llama_7b')
+
+def run_master(
+    inputs,
+    split_size,
+    num_workers,
+    partitions,
+    shards,
+    devices,
+    pre_trained=False,
+    logging=False,
+):
+    tokenizer = LlamaTokenizer.from_pretrained("openlm-research/open_llama_7b")
     # tokenizer.add_special_tokens({'pad_token': ' '})
-    inputs = dict(tokenizer(inputs, return_tensors="pt", max_length=32, truncation=True))
+    inputs = dict(
+        tokenizer(inputs, return_tensors="pt", max_length=32, truncation=True)
+    )
     # inputs = dict(tokenizer(inputs, return_tensors="pt"))
     print("Inputs:", inputs)
 
     config = LlamaConfig()
     if pre_trained == True:
-        net = LlamaForCausalLM.from_pretrained('openlm-research/open_llama_7b')
+        net = LlamaForCausalLM.from_pretrained("openlm-research/open_llama_7b")
     else:
         net = LlamaForCausalLM(config)
     net.eval()
-    
+
     layers = [
         LlamaEmbeddingLayer(config, net.model.embed_tokens),
-        *[LlamaDecoderLayer(config, i, net.model.layers[i]) for i in range(config.num_hidden_layers)],
+        *[
+            LlamaDecoderLayer(config, i, net.model.layers[i])
+            for i in range(config.num_hidden_layers)
+        ],
         LlamaNormLayer(config, net.model.norm),
-        LlamaLMHead(config, net.lm_head)
+        LlamaLMHead(config, net.lm_head),
     ]
 
     device_list = devices
 
-    model = RR_TransformerPipeline(config, split_size, ["worker{}".format(i + 1) for i in range(num_workers)], layers, partitions, shards, devices=device_list + device_list, output_handler=lm_head_output_handler)
+    model = RR_TransformerPipeline(
+        config,
+        split_size,
+        ["worker{}".format(i + 1) for i in range(num_workers)],
+        layers,
+        partitions,
+        shards,
+        devices=device_list + device_list,
+        output_handler=lm_head_output_handler,
+    )
     if not model.verify_parameter_consistency():
         print("Parameters not consistent!", flush=True)
         return
@@ -251,8 +307,8 @@ def run_master(inputs, split_size, num_workers, partitions, shards, devices, pre
     file = open("./llama.csv", "a")
     original_stdout = sys.stdout
     sys.stdout = file
-    
-    print("{}".format(shards),end=", ", flush=True)
+
+    print("{}".format(shards), end=", ", flush=True)
     tik = time.time()
     for i in range(num_batches):
         outputs = model.generate(**inputs)
@@ -262,42 +318,65 @@ def run_master(inputs, split_size, num_workers, partitions, shards, devices, pre
 
     sys.stdout = original_stdout
     print("Raw Outputs:", outputs)
-    print("Outputs:", tokenizer.batch_decode(outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False))
+    print(
+        "Outputs:",
+        tokenizer.batch_decode(
+            outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        ),
+    )
     # baseline_outputs = net.generate(**inputs)
     # print("Baseline Outputs:", tokenizer.batch_decode(baseline_outputs, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0])
 
-def run_worker(rank, world_size, inputs, split_size, partitions, placement, devices, pre_trained, logging):
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '29500'
+
+def run_worker(
+    rank,
+    world_size,
+    inputs,
+    split_size,
+    partitions,
+    placement,
+    devices,
+    pre_trained,
+    logging,
+):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "29500"
 
     # Higher timeout is added to accommodate for kernel compilation time in case of ROCm.
     options = rpc.TensorPipeRpcBackendOptions(num_worker_threads=256, rpc_timeout=300)
 
     if rank == 0:
         rpc.init_rpc(
-            "master",
-            rank=rank,
-            world_size=world_size,
-            rpc_backend_options=options
+            "master", rank=rank, world_size=world_size, rpc_backend_options=options
         )
-        run_master(inputs, split_size, num_workers=world_size - 1, partitions=partitions, shards=placement, devices=devices, pre_trained=pre_trained, logging=logging)
+        run_master(
+            inputs,
+            split_size,
+            num_workers=world_size - 1,
+            partitions=partitions,
+            shards=placement,
+            devices=devices,
+            pre_trained=pre_trained,
+            logging=logging,
+        )
     else:
         rpc.init_rpc(
             f"worker{rank}",
             rank=rank,
             world_size=world_size,
-            rpc_backend_options=options
+            rpc_backend_options=options,
         )
         pass
 
     # block until all rpcs finish
     rpc.shutdown()
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     with open("llama_config.yaml", "r") as config_file:
         config = yaml.safe_load(config_file)
         file = open("./llama.log", "w")
-        open("./llama.csv", "w") # flush the csv file
+        open("./llama.csv", "w")  # flush the csv file
         original_stdout = sys.stdout
         sys.stdout = file
 
@@ -306,28 +385,48 @@ if __name__=="__main__":
         repeat_times = config["repeat_times"]
         placements = config["placements"]
         split_size = config["micro_batch_size"]
-        pre_trained = config["pre_trained"] == "True" if "pre_trained" in config else False
+        pre_trained = (
+            config["pre_trained"] == "True" if "pre_trained" in config else False
+        )
         logging = config["logging"] == "True" if "logging" in config else False
         for shards in placements:
             world_size = len(shards) + 1
             print("placement:", shards)
             for i in range(repeat_times):
                 # generate input
-                prompts = ['Q: What is the largest animal?\nA:',
-                        'Q: What is the smallest animal?\nA:',
-                        'Q: What is the prettiest animal?\nA:',
-                        'Q: What is the most ugly animal?\nA:',
-                        'Q: What is the fattest animal?\nA:',
-                        'Q: What is the most skinny animal?\nA:',
-                        'Q: What is the fastest animal?\nA:',
-                        'Q: What is the slowest animal?\nA:']
+                prompts = [
+                    "Q: What is the largest animal?\nA:",
+                    "Q: What is the smallest animal?\nA:",
+                    "Q: What is the prettiest animal?\nA:",
+                    "Q: What is the most ugly animal?\nA:",
+                    "Q: What is the fattest animal?\nA:",
+                    "Q: What is the most skinny animal?\nA:",
+                    "Q: What is the fastest animal?\nA:",
+                    "Q: What is the slowest animal?\nA:",
+                ]
                 input_prompts = [prompts[0]] * batch_size
                 print("Inputs prompts:", input_prompts)
 
                 # run inference process
                 tik = time.time()
-                mp.spawn(run_worker, args=(world_size, input_prompts, split_size, partitions, shards, devices, pre_trained, logging), nprocs=world_size, join=True)
+                mp.spawn(
+                    run_worker,
+                    args=(
+                        world_size,
+                        input_prompts,
+                        split_size,
+                        partitions,
+                        shards,
+                        devices,
+                        pre_trained,
+                        logging,
+                    ),
+                    nprocs=world_size,
+                    join=True,
+                )
                 tok = time.time()
-                print(f"size of micro-batches = {split_size}, end-to-end execution time = {tok - tik} s")
+                print(
+                    f"size of micro-batches = {split_size}, end-to-end execution time = {tok - tik} s"
+                )
 
         sys.stdout = original_stdout

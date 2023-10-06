@@ -16,13 +16,15 @@ from deepspeed.pipe import PipelineModule
 from deepspeed.utils import RepeatingLoader
 
 
-def cifar_trainset(local_rank, dl_path='/tmp/cifar10-data'):
-    transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    ])
+def cifar_trainset(local_rank, dl_path="/tmp/cifar10-data"):
+    transform = transforms.Compose(
+        [
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
 
     # Ensure only one rank downloads.
     # Note: if the download path is not on a shared filesytem, remove the semaphore
@@ -30,36 +32,36 @@ def cifar_trainset(local_rank, dl_path='/tmp/cifar10-data'):
     dist.barrier()
     if local_rank != 0:
         dist.barrier()
-    trainset = torchvision.datasets.CIFAR10(root=dl_path,
-                                            train=True,
-                                            download=True,
-                                            transform=transform)
+    trainset = torchvision.datasets.CIFAR10(
+        root=dl_path, train=True, download=True, transform=transform
+    )
     if local_rank == 0:
         dist.barrier()
     return trainset
 
 
 def get_args():
-    parser = argparse.ArgumentParser(description='CIFAR')
-    parser.add_argument('--local_rank',
-                        type=int,
-                        default=-1,
-                        help='local rank passed from distributed launcher')
-    parser.add_argument('-s',
-                        '--steps',
-                        type=int,
-                        default=100,
-                        help='quit after this many steps')
-    parser.add_argument('-p',
-                        '--pipeline-parallel-size',
-                        type=int,
-                        default=2,
-                        help='pipeline parallelism')
-    parser.add_argument('--backend',
-                        type=str,
-                        default='nccl',
-                        help='distributed backend')
-    parser.add_argument('--seed', type=int, default=1138, help='PRNG seed')
+    parser = argparse.ArgumentParser(description="CIFAR")
+    parser.add_argument(
+        "--local_rank",
+        type=int,
+        default=-1,
+        help="local rank passed from distributed launcher",
+    )
+    parser.add_argument(
+        "-s", "--steps", type=int, default=100, help="quit after this many steps"
+    )
+    parser.add_argument(
+        "-p",
+        "--pipeline-parallel-size",
+        type=int,
+        default=2,
+        help="pipeline parallelism",
+    )
+    parser.add_argument(
+        "--backend", type=str, default="nccl", help="distributed backend"
+    )
+    parser.add_argument("--seed", type=int, default=1138, help="PRNG seed")
     parser = deepspeed.add_config_arguments(parser)
     args = parser.parse_args()
     return args
@@ -76,7 +78,8 @@ def train_base(args):
         args=args,
         model=net,
         model_parameters=[p for p in net.parameters() if p.requires_grad],
-        training_data=trainset)
+        training_data=trainset,
+    )
 
     dataloader = RepeatingLoader(dataloader)
     data_iter = iter(dataloader)
@@ -99,7 +102,9 @@ def train_base(args):
 
         outputs = engine(inputs)
     tok = time.time()
-    print(f"{tok - tik}, {(args.steps * engine.gradient_accumulation_steps() * engine.train_micro_batch_size_per_gpu()) / (tok - tik)}")
+    print(
+        f"{tok - tik}, {(args.steps * engine.gradient_accumulation_steps() * engine.train_micro_batch_size_per_gpu()) / (tok - tik)}"
+    )
 
     # # Training Code
     # print("Training")
@@ -127,7 +132,6 @@ def train_base(args):
     # print(f"{tok - tik}, {(args.steps * engine.gradient_accumulation_steps() * engine.train_micro_batch_size_per_gpu()) / (tok - tik)}")
 
 
-
 def join_layers(net):
     layers = [
         net.conv1,
@@ -140,12 +144,12 @@ def join_layers(net):
         net.layer4,
         net.avgpool,
         lambda x: torch.flatten(x, 1),
-        net.fc
+        net.fc,
     ]
     return layers
 
 
-def train_pipe(args, part='parameters'):
+def train_pipe(args, part="parameters"):
     torch.manual_seed(args.seed)
     deepspeed.runtime.utils.set_random_seed(args.seed)
 
@@ -155,11 +159,13 @@ def train_pipe(args, part='parameters'):
 
     net = resnet50(num_classes=10)
 
-    net = PipelineModule(layers=join_layers(net),
-                         loss_fn=torch.nn.CrossEntropyLoss(),
-                         num_stages=args.pipeline_parallel_size,
-                         partition_method=part,
-                         activation_checkpoint_interval=0)
+    net = PipelineModule(
+        layers=join_layers(net),
+        loss_fn=torch.nn.CrossEntropyLoss(),
+        num_stages=args.pipeline_parallel_size,
+        partition_method=part,
+        activation_checkpoint_interval=0,
+    )
 
     trainset = cifar_trainset(args.local_rank)
     print("Data Sample:", trainset[0], trainset[0][0].shape)
@@ -168,7 +174,8 @@ def train_pipe(args, part='parameters'):
         args=args,
         model=net,
         model_parameters=[p for p in net.parameters() if p.requires_grad],
-        training_data=trainset)
+        training_data=trainset,
+    )
 
     # # Training Code
     # print("Training")
@@ -178,7 +185,7 @@ def train_pipe(args, part='parameters'):
 
     # tok = time.time()
     # print(f"{tok - tik}, {(args.steps * engine.train_batch_size()) / (tok - tik)}")
-    
+
     # Inference Code
     print("Inference")
     tik = time.time()
@@ -188,11 +195,12 @@ def train_pipe(args, part='parameters'):
     tok = time.time()
     print(f"{tok - tik}, {(args.steps * engine.train_batch_size()) / (tok - tik)}")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     args = get_args()
 
     deepspeed.init_distributed(dist_backend=args.backend)
-    args.local_rank = int(os.environ['LOCAL_RANK'])
+    args.local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(args.local_rank)
 
     if args.pipeline_parallel_size == 0:

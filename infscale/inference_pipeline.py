@@ -15,19 +15,22 @@ from transformers import PreTrainedModel
 # Helper Functions
 ###########################################################################################
 
+
 def list2csvcell(l):
     if len(l) == 0:
         return "0"
-    
+
     s = str(l[0])
     for i in range(1, len(l)):
         s += "-" + str(l[i])
 
     return s
 
+
 ###########################################################################################
 # Common building blocks for Convolutional Neural Network
 ###########################################################################################
+
 
 class CNNShardBase(nn.Module):
     def __init__(self, device, layers, *args, **kwargs):
@@ -36,22 +39,29 @@ class CNNShardBase(nn.Module):
         self.lock = threading.Lock()
         self.layers = [m.to(device) if isinstance(m, nn.Module) else m for m in layers]
         self.device = device
-        self.shard_index = kwargs["sid"] if "sid" in kwargs else None # index of the shard in the global set of shards
-        self.partition_index = kwargs["pid"] if "pid" in kwargs else None # index of the partition of layers beared by this shard
+        self.shard_index = (
+            kwargs["sid"] if "sid" in kwargs else None
+        )  # index of the shard in the global set of shards
+        self.partition_index = (
+            kwargs["pid"] if "pid" in kwargs else None
+        )  # index of the partition of layers beared by this shard
         if self.shard_index is not None and self.partition_index is not None:
             self.log_en = kwargs["logging"] if "logging" in kwargs else False
         else:
             self.log_en = False
 
         if self.log_en:
-            self.logfile = open("shard-sid{}-pid{}.log".format(self.shard_index, self.partition_index), "w")
+            self.logfile = open(
+                "shard-sid{}-pid{}.log".format(self.shard_index, self.partition_index),
+                "w",
+            )
             print("Layers:", self.layers, file=self.logfile, flush=True)
 
         self.accumulated_processing_time = 0
         self.accumulated_local_trans_time = 0
         self.accumulated_locking_time = 0
         self.forward_times = 0
-    
+
     def forward(self, x_rref):
         t1 = time.time()
         x = x_rref.to_here()
@@ -68,33 +78,47 @@ class CNNShardBase(nn.Module):
                 self.forward_times += 1
                 print(f"Remote Data Transmission Time: {t2 - t1} s", file=self.logfile)
                 print(f"Local Data Transmission Time: {t3 - t2} s", file=self.logfile)
-                self.accumulated_local_trans_time += (t3 - t2)
+                self.accumulated_local_trans_time += t3 - t2
                 print(f"Locking Time: {t4 - t3} s", file=self.logfile)
-                self.accumulated_locking_time += (t4 - t3)
+                self.accumulated_locking_time += t4 - t3
                 print(f"Data Processing Time: {t5 - t4} s", file=self.logfile)
-                self.accumulated_processing_time += (t5 - t4)
+                self.accumulated_processing_time += t5 - t4
         return x.cpu()
-    
+
     def __del__(self):
         if self.log_en:
-            print(f"Avg Local Data Transmission Time: {self.accumulated_local_trans_time / self.forward_times} s", file=self.logfile)
-            print(f"Avg Locking Time: {self.accumulated_locking_time / self.forward_times}", file=self.logfile)
-            print(f"Avg Data Processing Time: {self.accumulated_processing_time / self.forward_times} s", file=self.logfile, flush=True)
-    
+            print(
+                f"Avg Local Data Transmission Time: {self.accumulated_local_trans_time / self.forward_times} s",
+                file=self.logfile,
+            )
+            print(
+                f"Avg Locking Time: {self.accumulated_locking_time / self.forward_times}",
+                file=self.logfile,
+            )
+            print(
+                f"Avg Data Processing Time: {self.accumulated_processing_time / self.forward_times} s",
+                file=self.logfile,
+                flush=True,
+            )
+
+
 class RR_CNNPipeline(nn.Module):
     """
     Assemble multiple ResNet parts as an nn.Module and define pipelining logic
     May have several replicas for one ResNet part
     Use round-robin to schedule workload across replicas
     """
-    def __init__(self, split_size, workers, layers, partitions, shards, devices, *args, **kwargs):
+
+    def __init__(
+        self, split_size, workers, layers, partitions, shards, devices, *args, **kwargs
+    ):
         super(RR_CNNPipeline, self).__init__()
 
         self.split_size = split_size
         layer_partitions = []
         partitions = [0] + partitions + [len(layers)]
         for i in range(len(partitions) - 1):
-            layer_partitions.append(layers[partitions[i]:partitions[i+1]])
+            layer_partitions.append(layers[partitions[i] : partitions[i + 1]])
 
         assert len(workers) >= len(shards)
         assert len(devices) >= len(shards)
@@ -109,8 +133,12 @@ class RR_CNNPipeline(nn.Module):
             rref = rpc.remote(
                 workers[i],
                 CNNShardBase,
-                args = (devices[i], shard_layers, ) + args,
-                kwargs = kwargs
+                args=(
+                    devices[i],
+                    shard_layers,
+                )
+                + args,
+                kwargs=kwargs,
             )
             self.shards_ref[partition_id].append(rref)
 
@@ -133,11 +161,12 @@ class RR_CNNPipeline(nn.Module):
         # collect and cat all output tensors into one tensor.
         return torch.cat(torch.futures.wait_all(out_futures))
 
+
 ###########################################################################################
-# encode_tensor and decode_tensor are two functions used to handle the problem that PyTorch 
-# RPC can only transmit a single tensor while a list or a tuple of tensors need to be 
+# encode_tensor and decode_tensor are two functions used to handle the problem that PyTorch
+# RPC can only transmit a single tensor while a list or a tuple of tensors need to be
 # transmitted between shards in Transformer-based models.
-# 
+#
 # Input tuple definition as follows:
 #   0: input_ids
 #   1: token_type_ids
@@ -160,7 +189,7 @@ dtype2int_map = {
     torch.int8: 2,
     torch.int16: 3,
     torch.int32: 4,
-    torch.int64: 5
+    torch.int64: 5,
 }
 int2dtype_map = [
     torch.float,
@@ -168,13 +197,16 @@ int2dtype_map = [
     torch.int8,
     torch.int16,
     torch.int32,
-    torch.int64
+    torch.int64,
 ]
 
-def encode_tensors(tensors: Union[List[torch.Tensor], Tuple[torch.Tensor]]) -> torch.FloatTensor:
+
+def encode_tensors(
+    tensors: Union[List[torch.Tensor], Tuple[torch.Tensor]]
+) -> torch.FloatTensor:
     tensor_num = len(tensors)
     ttype = torch.float
-    
+
     # the first cell bears the number of tensors
     res = torch.tensor([tensor_num], dtype=ttype)
     for t in tensors:
@@ -189,9 +221,12 @@ def encode_tensors(tensors: Union[List[torch.Tensor], Tuple[torch.Tensor]]) -> t
 
     return res
 
-def decode_tensors(encoded_data: torch.FloatTensor, logFile=sys.stderr) -> List[torch.Tensor]:
+
+def decode_tensors(
+    encoded_data: torch.FloatTensor, logFile=sys.stderr
+) -> List[torch.Tensor]:
     tensor_num = int(encoded_data[0])
-    
+
     # decode tensor data from the second cell
     datap = 1
     res = []
@@ -204,25 +239,32 @@ def decode_tensors(encoded_data: torch.FloatTensor, logFile=sys.stderr) -> List[
         tensor_dtype = int2dtype_map[tensor_dtype_index]
 
         tensor_dim = int(encoded_data[datap + 1])
-        tensor_shape = encoded_data[datap + 2:datap + (2 + tensor_dim)].int().tolist()
-        datap += (2 + tensor_dim)
-        tensor_size = reduce(lambda x, y: x*y, tensor_shape)
-        tensor = encoded_data[datap:datap + tensor_size].view(tensor_shape).to(tensor_dtype)
+        tensor_shape = encoded_data[datap + 2 : datap + (2 + tensor_dim)].int().tolist()
+        datap += 2 + tensor_dim
+        tensor_size = reduce(lambda x, y: x * y, tensor_shape)
+        tensor = (
+            encoded_data[datap : datap + tensor_size]
+            .view(tensor_shape)
+            .to(tensor_dtype)
+        )
         datap += tensor_size
         res.append(tensor)
 
     return res
 
+
 def merge_tupled_tensors(tlist: list):
     # tlist is a list of tuples of tensors that have the same number of cells
     out = tuple()
     for i in range(len(tlist[0])):
-        out = out + (torch.cat([x[i] for x in tlist]), )
+        out = out + (torch.cat([x[i] for x in tlist]),)
     return out
+
 
 ###########################################################################################
 # Common building blocks for Transformer-based Neural Network
 ###########################################################################################
+
 
 class TransformerShardBase(nn.Module):
     def __init__(self, device, layers, *args, **kwargs):
@@ -232,16 +274,23 @@ class TransformerShardBase(nn.Module):
         self.layers = [m.to(device) for m in layers]
         self.device = device
 
-        self.shard_index = kwargs["sid"] if "sid" in kwargs else None # index of the shard in the global set of shards
-        self.partition_index = kwargs["pid"] if "pid" in kwargs else None # index of the partition of layers beared by this shard
+        self.shard_index = (
+            kwargs["sid"] if "sid" in kwargs else None
+        )  # index of the shard in the global set of shards
+        self.partition_index = (
+            kwargs["pid"] if "pid" in kwargs else None
+        )  # index of the partition of layers beared by this shard
         if self.shard_index is not None and self.partition_index is not None:
             self.log_en = kwargs["logging"] if "logging" in kwargs else False
         else:
             self.log_en = False
 
         if self.log_en:
-            self.logfile = open("shard-sid{}-pid{}.log".format(self.shard_index, self.partition_index), "w")
-    
+            self.logfile = open(
+                "shard-sid{}-pid{}.log".format(self.shard_index, self.partition_index),
+                "w",
+            )
+
     def forward(self, x_rref):
         x = x_rref.to_here()
         x = decode_tensors(x)
@@ -272,6 +321,7 @@ class TransformerShardBase(nn.Module):
             res += l.parameter_list()
         return res
 
+
 class RR_TransformerPipeline(PreTrainedModel):
     """
 
@@ -285,20 +335,33 @@ class RR_TransformerPipeline(PreTrainedModel):
     `add_cross_attention` set to `True`; an `encoder_hidden_states` is then expected as an input to the forward pass.
     """
 
-    def __init__(self, config, split_size, workers, layers, partitions, shards, devices, *args, **kwargs):
+    def __init__(
+        self,
+        config,
+        split_size,
+        workers,
+        layers,
+        partitions,
+        shards,
+        devices,
+        *args,
+        **kwargs,
+    ):
         super().__init__(config, args, kwargs)
         self.config = config
         self.split_size = split_size
-        self.output_handler = kwargs["output_handler"] if "output_handler" in kwargs else None
-    
+        self.output_handler = (
+            kwargs["output_handler"] if "output_handler" in kwargs else None
+        )
+
         assert len(workers) >= len(shards)
         assert len(workers) <= len(devices)
 
         layer_partitions = []
         partitions = [0] + partitions + [len(layers)]
         for i in range(len(partitions) - 1):
-            if len(layers[partitions[i]:partitions[i+1]]) > 0:
-                layer_partitions.append(layers[partitions[i]:partitions[i+1]])
+            if len(layers[partitions[i] : partitions[i + 1]]) > 0:
+                layer_partitions.append(layers[partitions[i] : partitions[i + 1]])
 
         self.shards_ref = [[] for i in range(len(layer_partitions))]
         # place shards according to configuration
@@ -306,12 +369,15 @@ class RR_TransformerPipeline(PreTrainedModel):
             partition_id = shards[i] - 1
             shard_layers = layer_partitions[partition_id]
             print("--------------------------------")
-            print("Starting {} with shard_id:{}".format(workers[i], partition_id), flush=True)
+            print(
+                "Starting {} with shard_id:{}".format(workers[i], partition_id),
+                flush=True,
+            )
             rref = rpc.remote(
                 workers[i],
                 TransformerShardBase,
-                args = (devices[i], shard_layers, i) + args,
-                kwargs = kwargs
+                args=(devices[i], shard_layers, i) + args,
+                kwargs=kwargs,
             )
             self.shards_ref[partition_id].append(rref)
 
@@ -330,7 +396,7 @@ class RR_TransformerPipeline(PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         use_cache: Optional[bool] = None,
-        output_handler: Optional[Callable] = None
+        output_handler: Optional[Callable] = None,
     ):
         r"""
         encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, *optional*):
@@ -353,7 +419,9 @@ class RR_TransformerPipeline(PreTrainedModel):
             `past_key_values`).
         """
         if input_ids is not None and inputs_embeds is not None:
-            raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+            raise ValueError(
+                "You cannot specify both input_ids and inputs_embeds at the same time"
+            )
         elif input_ids is not None:
             input_shape = input_ids.size()
         elif inputs_embeds is not None:
@@ -365,22 +433,58 @@ class RR_TransformerPipeline(PreTrainedModel):
         device = input_ids.device if input_ids is not None else inputs_embeds.device
 
         num_stages = len(self.shards_ref)
-        spin_pointers = [0] * num_stages # spin pointers
+        spin_pointers = [0] * num_stages  # spin pointers
         out_futures = []
         for p in range(0, batch_size, self.split_size):
             # process one micro-batch at an iteration
-            # split the input along the dimension 
-            input_ids_split = input_ids[p:p + self.split_size]
-            token_type_ids_split = token_type_ids[p:p + self.split_size] if token_type_ids is not None else None
-            position_ids_split = position_ids[p:p + self.split_size] if position_ids is not None else None
-            inputs_embeds_split = inputs_embeds[p:p + self.split_size] if inputs_embeds is not None else None
-            attention_mask_split = attention_mask[p:p + self.split_size]
+            # split the input along the dimension
+            input_ids_split = input_ids[p : p + self.split_size]
+            token_type_ids_split = (
+                token_type_ids[p : p + self.split_size]
+                if token_type_ids is not None
+                else None
+            )
+            position_ids_split = (
+                position_ids[p : p + self.split_size]
+                if position_ids is not None
+                else None
+            )
+            inputs_embeds_split = (
+                inputs_embeds[p : p + self.split_size]
+                if inputs_embeds is not None
+                else None
+            )
+            attention_mask_split = attention_mask[p : p + self.split_size]
             # TODO: How should we handle head_mask
-            head_mask_split = head_mask[:][p:p + self.split_size] if head_mask is not None else None
-            encoder_hidden_states_split = encoder_hidden_states[p:p + self.split_size] if encoder_hidden_states is not None else None
-            encoder_attention_mask_split = encoder_attention_mask[p:p + self.split_size] if encoder_attention_mask is not None else None
+            head_mask_split = (
+                head_mask[:][p : p + self.split_size] if head_mask is not None else None
+            )
+            encoder_hidden_states_split = (
+                encoder_hidden_states[p : p + self.split_size]
+                if encoder_hidden_states is not None
+                else None
+            )
+            encoder_attention_mask_split = (
+                encoder_attention_mask[p : p + self.split_size]
+                if encoder_attention_mask is not None
+                else None
+            )
 
-            inputs = (input_ids_split, token_type_ids_split, position_ids_split, inputs_embeds_split, None, None, attention_mask_split, head_mask_split, encoder_hidden_states_split, encoder_attention_mask_split, None, None, None)
+            inputs = (
+                input_ids_split,
+                token_type_ids_split,
+                position_ids_split,
+                inputs_embeds_split,
+                None,
+                None,
+                attention_mask_split,
+                head_mask_split,
+                encoder_hidden_states_split,
+                encoder_attention_mask_split,
+                None,
+                None,
+                None,
+            )
 
             temp = encode_tensors(inputs)
             x_rref = RRef(temp)
@@ -399,11 +503,19 @@ class RR_TransformerPipeline(PreTrainedModel):
         if output_handler is None and self.output_handler is None:
             # default handling process for generic transformer models that don't have task-specific heads
             outputs = (
-                torch.cat([x[4] for x in output_list]), # last hidden states
-                torch.cat([x[5] for x in output_list]) if output_list[0][5] != None else None, # pooled hidden states
-                merge_tupled_tensors([x[10] for x in output_list]) if output_list[0][10] != None else None, # all hidden states
-                merge_tupled_tensors([x[11] for x in output_list]) if output_list[0][11] != None else None, # attentions
-                merge_tupled_tensors([x[12] for x in output_list]) if output_list[0][12] != None else None # cross attentions
+                torch.cat([x[4] for x in output_list]),  # last hidden states
+                torch.cat([x[5] for x in output_list])
+                if output_list[0][5] != None
+                else None,  # pooled hidden states
+                merge_tupled_tensors([x[10] for x in output_list])
+                if output_list[0][10] != None
+                else None,  # all hidden states
+                merge_tupled_tensors([x[11] for x in output_list])
+                if output_list[0][11] != None
+                else None,  # attentions
+                merge_tupled_tensors([x[12] for x in output_list])
+                if output_list[0][12] != None
+                else None,  # cross attentions
             )
         elif output_handler != None:
             # customized handling process designed to incorporate flexible outputs from task-specific heads
@@ -417,18 +529,26 @@ class RR_TransformerPipeline(PreTrainedModel):
     def parameter_list(self):
         res = []
         for i in range(len(self.shards_ref)):
-            res += [p.to_here() for p in self.shards_ref[i][0].rpc_sync().parameter_rrefs()]
-        
+            res += [
+                p.to_here() for p in self.shards_ref[i][0].rpc_sync().parameter_rrefs()
+            ]
+
         return res
 
     def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
         return iter(self.parameter_list())
-    
+
     def verify_parameter_consistency(self):
         for i in range(len(self.shards_ref)):
             for j in range(1, len(self.shards_ref[i])):
-                base = [p.to_here() for p in self.shards_ref[i][0].rpc_sync().parameter_rrefs()]
-                cmp = [p.to_here() for p in self.shards_ref[i][j].rpc_sync().parameter_rrefs()]
+                base = [
+                    p.to_here()
+                    for p in self.shards_ref[i][0].rpc_sync().parameter_rrefs()
+                ]
+                cmp = [
+                    p.to_here()
+                    for p in self.shards_ref[i][j].rpc_sync().parameter_rrefs()
+                ]
 
                 for k in range(len(base)):
                     if torch.all(base[k] != cmp[k]):
@@ -437,7 +557,12 @@ class RR_TransformerPipeline(PreTrainedModel):
         return True
 
     def prepare_inputs_for_generation(
-        self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
+        self,
+        input_ids,
+        past_key_values=None,
+        attention_mask=None,
+        inputs_embeds=None,
+        **kwargs,
     ):
         if past_key_values:
             input_ids = input_ids[:, -1:]
