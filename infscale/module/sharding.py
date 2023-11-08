@@ -20,9 +20,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
+
+# This file was modified from
+# https://github.com/SymbioticLab/Oobleck/blob/3b7a0c2f19bff0991e623ffbeb8a5b365853bf3a/oobleck/module/sharding.py
+
+
 from collections import defaultdict
 from itertools import chain
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Dict, List, Optional, Tuple, Type
 
 import torch.fx
 from torch.fx.node import Node
@@ -30,40 +35,83 @@ from transformers import PretrainedConfig
 from transformers.utils.fx import symbolic_trace
 
 
-def get_split_points(config: Type[PretrainedConfig]) -> List[str]:
+def _get_split_points_gpt(config: Type[PretrainedConfig]) -> List[str]:
     split_points = []
 
-    if "gpt" in config.model_type:
-        for i in range(config.num_hidden_layers):
-            split_points.append(f"transformer.h.{i}")
-        split_points.append("transformer.ln_f")
-    elif "bert" in config.model_type:
-        for i in range(config.num_hidden_layers):
-            split_points.append(f"bert.encoder.layer.{i}")
-        split_points.append("cls")
-    elif "t5" in config.model_type:
-        for i in range(config.num_layers):
-            split_points.append(f"encoder.block.{i}")
-        for i in range(config.num_decoder_layers):
-            split_points.append(f"decoder.block.{i}")
-        split_points.append("lm_head")
+    for i in range(config.num_hidden_layers):
+        split_points.append(f"transformer.h.{i}")
+    split_points.append("transformer.ln_f")
+
+    return split_points
+
+
+def _get_split_points_bert(config: Type[PretrainedConfig]) -> List[str]:
+    split_points = []
+
+    for i in range(config.num_hidden_layers):
+        split_points.append(f"bert.encoder.layer.{i}")
+    split_points.append("cls")
+
+    return split_points
+
+
+def _get_split_points_t5(config: Type[PretrainedConfig]) -> List[str]:
+    split_points = []
+
+    for i in range(config.num_layers):
+        split_points.append(f"encoder.block.{i}")
+    for i in range(config.num_decoder_layers):
+        split_points.append(f"decoder.block.{i}")
+    split_points.append("lm_head")
+
+    return split_points
+
+
+def _get_split_points_vit(config: Type[PretrainedConfig]) -> List[str]:
     # Sharding for the Google's HuggingFace ViT model
     # e.g. google/vit-base-patch16-224 (https://huggingface.co/google/vit-base-patch16-224)
-    elif "vit" in config.model_type:
-        for i in range(config.num_hidden_layers):
-            split_points.append(f"vit.encoder.layer.{i}")
-        split_points.append("vit.layernorm")
+    split_points = []
+
+    for i in range(config.num_hidden_layers):
+        split_points.append(f"vit.encoder.layer.{i}")
+    split_points.append("vit.layernorm")
+
+    return split_points
+
+
+def _get_split_points_resnet(config: Type[PretrainedConfig]) -> List[str]:
     # Sharding for the Microsoft's HuggingFace ResNet model
     # e.g. microsoft/resnet-152 (https://huggingface.co/microsoft/resnet-152)
-    elif "resnet" in config.model_type:
-        for i, depth in enumerate(config.depths):
-            for j in range(depth):
-                split_points.append(f"resnet.encoder.stages.{i}.layers.{j}")
-        split_points.append("resnet.pooler")
+    split_points = []
+
+    for i, depth in enumerate(config.depths):
+        for j in range(depth):
+            split_points.append(f"resnet.encoder.stages.{i}.layers.{j}")
+    split_points.append("resnet.pooler")
+
+    return split_points
+
+
+func_split_points_map = {
+    "openai-gpt": _get_split_points_gpt,
+    "gpt2": _get_split_points_gpt,
+    "bert": _get_split_points_bert,
+    "t5": _get_split_points_t5,
+    "vit": _get_split_points_vit,
+    "resnet": _get_split_points_resnet,
+}
+
+
+def get_split_points(config: Type[PretrainedConfig]) -> List[str]:
+    """Get points that can be split in a model."""
+    if config.model_type not in func_split_points_map:
+        raise KeyError(f"Model type '{config.model_type}' is not supported.")
+
+    split_points = func_split_points_map[config.model_type](config)
 
     assert (
         split_points
-    ), f"Split points is empty. Check your model {config.model_type} is supported."
+    ), f"Split points is empty. Check model type {config.model_type} is supported."
 
     return split_points
 
@@ -72,13 +120,13 @@ def _split_nodes(
     traced: torch.fx.GraphModule, split_points: List[str]
 ) -> Tuple[Dict[str, int], Dict[int, List[str]], Dict[str, int]]:
     """Analyze the given traced module and split it to subgraphs.
+
     While partitioning, it also finds additioanl required inputs and outputs
     so that they are added.
 
     Args:
         traced (torch.fx.GraphModule): A traced graph module to be split.
     """
-
     node_name_to_shard_id: Dict[str, int] = {}
     shard_id_to_node: Dict[int, List[Node]] = defaultdict(list)
     shard_id = 0
@@ -131,8 +179,7 @@ def _split_nodes(
 def shard_model(
     model: torch.nn.Module, concrete_args: List[str], split_points: List[str]
 ) -> List[torch.fx.GraphModule]:
-    """Use torch.fx to do symbolic trace on the given model, and shard it to several subgraphs
-    based on the given split_points.
+    """Use torch.fx to do symbolic trace on the given model, and shard it to several subgraphs based on the given split_points.
 
     Code reference:
     1. https://github.com/HPDL-Group/Merak/blob/e8a2a779fea878be9b778f8a808a192364766f36/Merak/autoshard/graph_shard.py
