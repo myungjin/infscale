@@ -24,23 +24,20 @@ SOFTWARE.
 # https://github.com/SymbioticLab/Oobleck/blob/3b7a0c2f19bff0991e623ffbeb8a5b365853bf3a/oobleck/execution/dataset.py
 
 from itertools import chain
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Optional, Tuple, Type
 
-import evaluate
-import numpy as np
 import torch
 from datasets import Dataset, load_dataset
-from oobleck.module.model import image_models, lang_models
-from torchvision.transforms import (CenterCrop, Compose, Normalize,
-                                    RandomHorizontalFlip, RandomResizedCrop,
-                                    Resize, ToTensor)
+from infscale.module.model_metadata import BaseModelMetaData, ModelGroup
+from torchvision.transforms import (CenterCrop, Compose, Normalize, Resize,
+                                    ToTensor)
 from transformers import AutoImageProcessor, AutoTokenizer
 from transformers.data.data_collator import default_data_collator
 from transformers.image_processing_utils import BaseImageProcessor
 from transformers.tokenization_utils import PreTrainedTokenizerBase
 
 
-class OobleckDataset:
+class HuggingFaceDataset:
     """
     Load datasets from Hugging Face Hub (https://huggingface.co/datasets)
     and do preprocessing.
@@ -48,47 +45,37 @@ class OobleckDataset:
 
     def __init__(
         self,
-        model_name: str,
+        mmd: BaseModelMetaData,
         dataset_path: str,
         dataset_name: Optional[str] = None,
+        split: Optional[str] = "test",
         max_seq_length: Optional[int] = None,
     ):
-        # TODO: replace it with evaluate.load("accuracy")
-        metric = evaluate.load("accuracy")
-
-        if any(lang_model in model_name for lang_model in lang_models):
-            self.tokenizer, self.dataset = OobleckDataset.create_language_dataset(
-                model_name, dataset_path, dataset_name, max_seq_length
+        """Initialize the class."""
+        if mmd.model_group == ModelGroup.LANG:
+            self.tokenizer, self.dataset = HuggingFaceDataset.create_language_dataset(
+                mmd.name,
+                dataset_path,
+                dataset_name,
+                split,
+                max_seq_length,
             )
-
-            def compute_metrics(eval_preds):
-                preds, labels = eval_preds
-                # preds have the same shape as the labels, after the argmax(-1) has been calculated
-                # by preprocess_logits_for_metrics but we need to shift the labels
-                labels = labels[:, 1:].reshape(-1)
-                preds = preds[:, :-1].reshape(-1)
-                return metric.compute(predictions=preds, references=labels)
-
-            self.compute_metrics = compute_metrics
 
             self.data_collator = default_data_collator
-        elif any(image_model in model_name for image_model in image_models):
-            self.tokenizer, self.dataset = OobleckDataset.create_image_dataset(
-                model_name, dataset_path, dataset_name
+
+        elif mmd.model_group == ModelGroup.IMAGE:
+            self.tokenizer, self.dataset = HuggingFaceDataset.create_image_dataset(
+                mmd.name,
+                dataset_path,
+                dataset_name,
+                split,
             )
-
-            def compute_metrics(p):
-                return metric.compute(
-                    predictions=np.argmax(p.predictions, axis=1), references=p.label_ids
-                )
-
-            self.compute_metrics = compute_metrics
 
             def collate_fn(examples):
                 pixel_values = torch.stack(
                     [example["pixel_values"] for example in examples]
                 )
-                labels = torch.tensor([example["labels"] for example in examples])
+                labels = torch.tensor([example["label"] for example in examples])
                 return {"pixel_values": pixel_values, "labels": labels}
 
             self.data_collator = collate_fn
@@ -98,11 +85,9 @@ class OobleckDataset:
 
         assert (
             self.dataset
-        ), f"Dataset it not initialized because given model {model_name} is not supported yet."
+        ), f"Dataset it not initialized because given model {mmd.name} is not supported yet."
 
-        trace_input = next(iter(self.dataset["train"]))
-        print(f"len = {len(trace_input)}")
-        print(f"trace_input = {trace_input}")
+        trace_input = next(iter(self.dataset))
         self.sample = self.data_collator([trace_input])
 
     @staticmethod
@@ -110,14 +95,11 @@ class OobleckDataset:
         model_name: str,
         dataset_path: str,
         dataset_name: Optional[str],
+        split: Optional[str] = None,
     ) -> Tuple[Type[BaseImageProcessor], Dataset]:
-        dataset = load_dataset(dataset_path, dataset_name, task="image-classification")
-
-        # If we don't have a validation split, split off a percentage of train as validation.
-        if "validation" not in dataset.keys():
-            split = dataset["train"].train_test_split(0.05)
-            dataset["train"] = split["train"]
-            dataset["validation"] = split["test"]
+        """Create image dataset."""
+        # no need to load all datasets; since we need dataset for inference
+        dataset = load_dataset(dataset_path, dataset_name, split=split)
 
         image_processor = AutoImageProcessor.from_pretrained(model_name)
         size = (
@@ -126,44 +108,37 @@ class OobleckDataset:
             else (image_processor.size["height"], image_processor.size["width"])
         )
 
-        normalize = Normalize(
-            mean=image_processor.image_mean, std=image_processor.image_std
-        )
-        _train_transforms = Compose(
-            [
-                RandomResizedCrop(size),
-                RandomHorizontalFlip(),
-                ToTensor(),
-                normalize,
-            ]
-        )
-        _val_transforms = Compose(
-            [
-                Resize(size),
-                CenterCrop(size),
-                ToTensor(),
-                normalize,
-            ]
-        )
+        def transforms(example_batch):
+            """Apply _transforms across a batch."""
+            _normalize = Normalize(
+                mean=image_processor.image_mean, std=image_processor.image_std
+            )
+            _transforms = Compose(
+                [
+                    Resize(size),
+                    CenterCrop(size),
+                    ToTensor(),
+                    _normalize,
+                ]
+            )
 
-        def train_transforms(example_batch):
-            """Apply _train_transforms across a batch."""
-            example_batch["pixel_values"] = [
-                _train_transforms(pil_img.convert("RGB"))
-                for pil_img in example_batch["image"]
-            ]
+            # TODO: image datasets have img or image as key;
+            #       handling it in the following way can be error-prone
+            #       need some automated way
+            try:
+                example_batch["pixel_values"] = [
+                    _transforms(pil_img.convert("RGB"))
+                    for pil_img in example_batch["img"]
+                ]
+            except KeyError:
+                example_batch["pixel_values"] = [
+                    _transforms(pil_img.convert("RGB"))
+                    for pil_img in example_batch["image"]
+                ]
+
             return example_batch
 
-        def val_transforms(example_batch):
-            """Apply _val_transforms across a batch."""
-            example_batch["pixel_values"] = [
-                _val_transforms(pil_img.convert("RGB"))
-                for pil_img in example_batch["image"]
-            ]
-            return example_batch
-
-        dataset["train"].set_transform(train_transforms)
-        dataset["validation"].set_transform(val_transforms)
+        dataset.set_transform(transforms)
 
         return image_processor, dataset
 
@@ -172,19 +147,16 @@ class OobleckDataset:
         model_name: str,
         dataset_path: str,
         dataset_name: Optional[str],
+        split: Optional[str] = None,
         max_seq_length: Optional[int] = None,
     ) -> Tuple[Type[PreTrainedTokenizerBase], Dataset]:
+        """Create language dataset."""
         tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-        raw_dataset = load_dataset(dataset_path, dataset_name)
-        if "validation" not in raw_dataset.keys():
-            raw_dataset["validation"] = load_dataset(
-                dataset_path,
-                dataset_name,
-                split=f"train[:5%]",
-            )
+        # no need to load all datasets; since we need a dataset for inference
+        dataset = load_dataset(dataset_path, dataset_name, split=split)
 
-        column_names = list(raw_dataset["train"].features)
+        column_names = list(dataset.features)
         text_column_name = "text" if "text" in column_names else column_names[0]
 
         if max_seq_length is None:
@@ -193,7 +165,7 @@ class OobleckDataset:
         def tokenize_function(examples):
             return tokenizer(examples[text_column_name])
 
-        tokenized_datasets = raw_dataset.map(
+        tokenized_dataset = dataset.map(
             tokenize_function,
             batched=True,
             remove_columns=column_names,
@@ -221,8 +193,8 @@ class OobleckDataset:
             result["labels"] = result["input_ids"].copy()
             return result
 
-        tokenized_datasets = tokenized_datasets.map(
+        tokenized_dataset = tokenized_dataset.map(
             group_texts, batched=True, load_from_cache_file=True
         )
 
-        return tokenizer, tokenized_datasets
+        return tokenizer, tokenized_dataset

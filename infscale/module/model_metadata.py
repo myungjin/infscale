@@ -1,5 +1,6 @@
 """ModelMetaData."""
 from abc import abstractmethod
+from enum import Enum
 from typing import List
 
 from accelerate import init_empty_weights
@@ -16,12 +17,21 @@ AutoModelType = (
 logger = get_logger()
 
 
+class ModelGroup(str, Enum):
+    """Model class enum class."""
+
+    UNKNOWN = "unknown"
+    IMAGE = "image"
+    LANG = "language"
+
+
 class BaseModelMetaData:
     """Base class for model meta data implementation."""
 
     def __init__(self, name: str, config: PretrainedConfig):
         """Initialize class."""
         self.name: str = name
+        self.model_group = ModelGroup.UNKNOWN
         self.config: PretrainedConfig = config
 
         self.model: AutoModelType = None
@@ -38,6 +48,12 @@ class BaseModelMetaData:
 
 class Gpt2ModelMetaData(BaseModelMetaData):
     """Gpt2 model meta data class."""
+
+    def __init__(self, name: str, config: PretrainedConfig):
+        """Initialize class."""
+        super().__init__(name, config)
+
+        self.model_group = ModelGroup.LANG
 
     def get_model(self) -> PreTrainedModel:
         """Get model."""
@@ -70,6 +86,12 @@ class Gpt2ModelMetaData(BaseModelMetaData):
 class BertModelMetaData(BaseModelMetaData):
     """Bert model meta data class."""
 
+    def __init__(self, name: str, config: PretrainedConfig):
+        """Initialize class."""
+        super().__init__(name, config)
+
+        self.model_group = ModelGroup.LANG
+
     def get_model(self) -> PreTrainedModel:
         """Get model."""
         if self.model:
@@ -100,6 +122,12 @@ class BertModelMetaData(BaseModelMetaData):
 
 class T5ModelMetaData(BaseModelMetaData):
     """T5 model meta data class."""
+
+    def __init__(self, name: str, config: PretrainedConfig):
+        """Initialize class."""
+        super().__init__(name, config)
+
+        self.model_group = ModelGroup.LANG
 
     def get_model(self) -> PreTrainedModel:
         """Get model."""
@@ -135,6 +163,12 @@ class T5ModelMetaData(BaseModelMetaData):
 class VitModelMetaData(BaseModelMetaData):
     """Vit model meta data class."""
 
+    def __init__(self, name: str, config: PretrainedConfig):
+        """Initialize class."""
+        super().__init__(name, config)
+
+        self.model_group = ModelGroup.IMAGE
+
     def get_model(self) -> PreTrainedModel:
         """Get model."""
         if self.model:
@@ -167,6 +201,12 @@ class VitModelMetaData(BaseModelMetaData):
 
 class ResnetModelMetaData(BaseModelMetaData):
     """Resnet model meta data class."""
+
+    def __init__(self, name: str, config: PretrainedConfig):
+        """Initialize class."""
+        super().__init__(name, config)
+
+        self.model_group = ModelGroup.IMAGE
 
     def get_model(self) -> PreTrainedModel:
         """Get model."""

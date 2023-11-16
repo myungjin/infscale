@@ -1,21 +1,21 @@
 """conftest file."""
 
 supported_model_names = [
+    # language models
     "bert-base-uncased",
-    "google/vit-base-patch16-224",
     "gpt2",
-    "microsoft/resnet-152",
     "t5-small",
+    # image models
+    "google/vit-base-patch16-224",
+    "microsoft/resnet-50",
 ]
 
-# TODO: remove this; make the input names determined from a sample dataset
-#       by using oobleck's dataset.py
-input_names = [
-    ["input_ids", "token_type_ids", "attention_mask", "labels"],
-    ["pixel_values", "labels"],
-    ["input_ids", "attention_mask", "labels"],
-    ["pixel_values", "labels"],
-    ["input_ids", "attention_mask", "labels"],
+datasets = [
+    ("wikitext", "wikitext-2-raw-v1", "test"),
+    ("tiny_shakespeare", "", "test"),
+    ("wikitext", "wikitext-2-raw-v1", "test"),
+    ("Maysee/tiny-imagenet", "", "valid"),
+    ("cifar10", "", "test"),
 ]
 
-model_input_names_pairs = list(zip(supported_model_names, input_names))
+model_dataset_pairs = list(zip(supported_model_names, datasets))
