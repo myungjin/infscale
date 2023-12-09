@@ -21,10 +21,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "python-lsp-server",
     "black",
     "bumpver",
+    "grpcio-tools",
     "isort",
     "pip-tools",
     "pytest",
+    "python-lsp-server",
 ]

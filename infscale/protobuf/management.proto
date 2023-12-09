@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package management;
+
+import "google/protobuf/Empty.proto";
+
+// route for management between controller and agent
+// agent is client and controller is server (servicer)
+service ManagementRoute {
+  // agent uses register rpc to register itself in the controller
+  rpc register(RegReq) returns (RegRes) {}
+  // agent sends heart beat to the controller to signal its liveness
+  rpc heartbeat(AgentID) returns (google.protobuf.Empty) {}
+  // agent calls update rpc to provide status of workers
+  rpc update(Status) returns (google.protobuf.Empty) {}
+  // agent calls fetch rpc to obtain manifest for inference service
+  rpc fetch(AgentID) returns (stream Manifest) {}
+}
+
+message AgentID {
+  string id = 1;
+}
+
+message RegReq {
+  string name = 1; // ip address or host name
+}
+
+message RegRes {
+  bool status = 1;
+  string id = 2; // id created by controller
+}
+
+// status contains details about workers
+// TODO: for now, we keep this as byte stream; revisit this
+//       once manifest's structure is confirmed
+message Status {
+  string id = 1;
+  bytes payload = 2;
+}
+
+// manifest contains details about configuring inference service
+// TODO: for now, we keep this as byte stream; revisit this
+//       once manifest's structure is confirmed
+message Manifest {
+  bytes payload = 1;
+}
