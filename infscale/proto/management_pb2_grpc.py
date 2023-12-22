@@ -2,8 +2,8 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-from google.protobuf import Empty_pb2 as google_dot_protobuf_dot_Empty__pb2
-import management_pb2 as management__pb2
+from google.protobuf import empty_pb2 as google_dot_protobuf_dot_empty__pb2
+from . import management_pb2 as management__pb2
 
 
 class ManagementRouteStub(object):
@@ -25,12 +25,12 @@ class ManagementRouteStub(object):
         self.heartbeat = channel.unary_unary(
                 '/management.ManagementRoute/heartbeat',
                 request_serializer=management__pb2.AgentID.SerializeToString,
-                response_deserializer=google_dot_protobuf_dot_Empty__pb2.Empty.FromString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                 )
         self.update = channel.unary_unary(
                 '/management.ManagementRoute/update',
                 request_serializer=management__pb2.Status.SerializeToString,
-                response_deserializer=google_dot_protobuf_dot_Empty__pb2.Empty.FromString,
+                response_deserializer=google_dot_protobuf_dot_empty__pb2.Empty.FromString,
                 )
         self.fetch = channel.unary_stream(
                 '/management.ManagementRoute/fetch',
@@ -83,12 +83,12 @@ def add_ManagementRouteServicer_to_server(servicer, server):
             'heartbeat': grpc.unary_unary_rpc_method_handler(
                     servicer.heartbeat,
                     request_deserializer=management__pb2.AgentID.FromString,
-                    response_serializer=google_dot_protobuf_dot_Empty__pb2.Empty.SerializeToString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             ),
             'update': grpc.unary_unary_rpc_method_handler(
                     servicer.update,
                     request_deserializer=management__pb2.Status.FromString,
-                    response_serializer=google_dot_protobuf_dot_Empty__pb2.Empty.SerializeToString,
+                    response_serializer=google_dot_protobuf_dot_empty__pb2.Empty.SerializeToString,
             ),
             'fetch': grpc.unary_stream_rpc_method_handler(
                     servicer.fetch,
@@ -137,7 +137,7 @@ class ManagementRoute(object):
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/management.ManagementRoute/heartbeat',
             management__pb2.AgentID.SerializeToString,
-            google_dot_protobuf_dot_Empty__pb2.Empty.FromString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
@@ -154,7 +154,7 @@ class ManagementRoute(object):
             metadata=None):
         return grpc.experimental.unary_unary(request, target, '/management.ManagementRoute/update',
             management__pb2.Status.SerializeToString,
-            google_dot_protobuf_dot_Empty__pb2.Empty.FromString,
+            google_dot_protobuf_dot_empty__pb2.Empty.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 

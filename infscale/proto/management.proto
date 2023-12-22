@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package management;
 
-import "google/protobuf/Empty.proto";
+import "google/protobuf/empty.proto";
 
 // route for management between controller and agent
 // agent is client and controller is server (servicer)
@@ -22,12 +22,12 @@ message AgentID {
 }
 
 message RegReq {
-  string name = 1; // ip address or host name
+  string id = 1; // ip address, host name or random string
 }
 
 message RegRes {
   bool status = 1;
-  string id = 2; // id created by controller
+  string reason = 2; // reason string in case of failure
 }
 
 // status contains details about workers
