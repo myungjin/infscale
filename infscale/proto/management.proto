@@ -4,6 +4,18 @@ package management;
 
 import "google/protobuf/empty.proto";
 
+enum ResourceType {
+  CPU = 0;
+  GPU = 1;
+}
+
+enum GpuSubType {
+  UNKNOWN = 0; // set in case of resource type is CPU or none of the below sub types
+  T4 = 1;
+  V100 = 2;
+  A100 = 3;
+}
+
 // route for management between controller and agent
 // agent is client and controller is server (servicer)
 service ManagementRoute {
@@ -22,7 +34,8 @@ message AgentID {
 }
 
 message RegReq {
-  string id = 1; // a unique string: ip address, host name or random string
+  string id = 1; // a unique string for an agent:
+                 // ip address, host name or random string
 }
 
 message RegRes {
@@ -30,12 +43,47 @@ message RegRes {
   string reason = 2; // reason string in case of failure
 }
 
-// status contains details about workers
+// status contains details about resources and workers managed by an agent
 // TODO: for now, we keep this as byte stream; revisit this
 //       once manifest's structure is confirmed
 message Status {
-  string id = 1;
-  bytes payload = 2;
+  string id = 1; // agent's id
+  repeated ResourceStatus resource_statuses = 2;
+  repeated WorkerStatus worker_statuses = 3;
+}
+
+message ResourceID {
+  ResourceType type = 1; // CPU or GPU
+  int32 id = 2; // resource id of the given type
+                // 0: any in case of CPU;
+                // 1...n: specific device index for a given type
+                // CPU type has a specific id other than 0, it means cpu pinning
+}
+
+// resourcestatus contains status about resources managed by an agent
+message ResourceStatus {
+  ResourceID rid = 1; // Resource identifier
+  GpuSubType sub_type = 2;
+  bool available = 3; // specify whether the resource is up or down
+  bool used = 4; // specify whether the resource is used or not
+  int32 used_memory = 5; // this would be an average value
+  int32 total_memory = 6;
+}
+
+// workerstatus contains information about worker's status
+message WorkerStatus {
+  int32 deploy_id = 1; // deployment is a unit that encapsulates deployed model's stages
+                       // deploy id is an identifier for one deployment
+  int32 worker_id = 2; // worker id within deployment; each id is unique within one deployment
+  bool healthy = 3;    // true or false
+  ResourceID rid = 4;  // resource id specifies computation device that worker is running
+  Statistics statistics = 5;
+}
+
+// statistics contains 
+message Statistics {
+  int32 throughput = 1; // requests (e.g., prompts) per second; can be an average value
+  int32 latency_ms = 2; // delay in millisecond; can be an average value
 }
 
 // manifest contains details about configuring inference service
