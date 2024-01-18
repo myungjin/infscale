@@ -5,7 +5,7 @@ import asyncio
 from enum import Enum
 from typing import TYPE_CHECKING
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from infscale.constants import APISERVER_PORT
 from pydantic import BaseModel
 from uvicorn import Config, Server
@@ -13,7 +13,7 @@ from uvicorn import Config, Server
 if TYPE_CHECKING:
     from infscale.controller.controller import Controller
 
-
+_ctrl = None
 app = FastAPI()
 
 
@@ -22,7 +22,9 @@ class ApiServer:
 
     def __init__(self, ctrl: Controller, port: int = APISERVER_PORT):
         """Initialize an instance."""
-        self.api = API(ctrl)
+        global _ctrl
+        _ctrl = ctrl
+
         self.port = port
 
     async def run(self):
@@ -50,7 +52,7 @@ class ServeSpec(BaseModel):
 
     name: str
     model: str
-    num_failures: int
+    nfaults: int  # # of faults a serve should tolerate
 
 
 class Response(BaseModel):
@@ -59,17 +61,10 @@ class Response(BaseModel):
     message: str
 
 
-class API:
-    """Collection of API."""
+@app.post("/models", response_model=Response)
+async def serve(spec: ServeSpec):
+    """Serve a model."""
+    await _ctrl.handle_fastapi_request(ReqType.SERVE, spec)
 
-    def __init__(self, ctrl: Controller):
-        """Initialize instance."""
-        self.ctrl = ctrl
-
-    @app.post("/models", response_model=Response)
-    def serve(self, spec: ServeSpec):
-        """Serve a model."""
-        self.ctrl.handle_fastapi_request(ReqType.SERVE, spec)
-
-        res = {"message": "started serving"}
-        return res
+    res = {"message": "started serving"}
+    return res

@@ -8,7 +8,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **name** | **str** |  | 
 **model** | **str** |  | 
-**num_failures** | **int** |  | 
+**nfaults** | **int** |  | 
 
 ## Example
 

@@ -48,6 +48,11 @@ python -m infscale agent id123
 
 To see some log messages, add `LOG_LEVEL=DEBUG` before each of the above command.
 
+# To Run Tests
+```
+python -m pytest
+```
+
 # Below Outdated
 
 # LLM-Inference

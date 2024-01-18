@@ -96,7 +96,7 @@ class Controller:
         """Handle fastapi request."""
         if type == ReqType.SERVE:
             logger.debug("got request serve")
-            return self._handle_fastapi_serve(req)
+            return await self._handle_fastapi_serve(req)
         else:
             logger.debug(f"unknown fastapi rquest type: {type}")
             return None

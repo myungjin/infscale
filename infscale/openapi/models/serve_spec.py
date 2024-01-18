@@ -31,8 +31,8 @@ class ServeSpec(BaseModel):
     """ # noqa: E501
     name: StrictStr
     model: StrictStr
-    num_failures: StrictInt
-    __properties: ClassVar[List[str]] = ["name", "model", "num_failures"]
+    nfaults: StrictInt
+    __properties: ClassVar[List[str]] = ["name", "model", "nfaults"]
 
     model_config = {
         "populate_by_name": True,
@@ -85,7 +85,7 @@ class ServeSpec(BaseModel):
         _obj = cls.model_validate({
             "name": obj.get("name"),
             "model": obj.get("model"),
-            "num_failures": obj.get("num_failures")
+            "nfaults": obj.get("nfaults")
         })
         return _obj
 
