@@ -21,7 +21,7 @@ input_path=http://localhost:8080/openapi.json
 openapi-generator generate \
                   -c ./scripts/generator-config.yaml \
                   -i ${input_path} -g python \
-                  -o ./infscale/
+                  -o ./
 
 # do other stuff
 kill $PID
