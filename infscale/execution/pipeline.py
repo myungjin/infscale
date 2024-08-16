@@ -129,6 +129,7 @@ class Pipeline:
                 other_rank = 0
 
                 await _inner(my_rank, other_rank, wrk_info)
+
         for world_info in self.world_info_list:
             await world_info.channel.wait_readiness()
             logger.info(f"control channel for {world_info.name} is ready")
@@ -164,18 +165,18 @@ class Pipeline:
 
         logger.info("_server_send task done")
 
-    async def _server_recv(self, router: Router, max_seqno: int = -1):
+    async def _server_recv(self, router: Router, max_count: int = -1):
         """
         Receive inference results from the last stage.
 
-        max_seqno: if it's -1, run forever;
-                   come out of loop if seqno is max_seqno
+        max_count: if it's -1, run forever;
+                   get out of loop if the number of responses becomes max_count
         """
         logger.info("start to receive responses")
         seqno = -1
         idx = 0
         start_time = None
-        while max_seqno == -1 or max_seqno != seqno:
+        while max_count == -1 or max_count > idx:
             logger.debug("waiting for response")
             outputs, seqno = await router.rx_q.get()
             results = self._predict_fn(outputs)
@@ -200,11 +201,11 @@ class Pipeline:
         # TODO: we read data directly from a dataset right now.
         #       in the future, we need to take dataset from stream as well.
         self.dataset.set_micro_batch_size(self.spec.micro_batch_size)
-        max_seqno = self.dataset.num_of_batches() - 1
+        max_count = self.dataset.num_of_batches()
 
         # send and recv asynchronously
         send_task = asyncio.create_task(self._server_send(router))
-        recv_task = asyncio.create_task(self._server_recv(router, max_seqno))
+        recv_task = asyncio.create_task(self._server_recv(router, max_count))
         logger.debug("created _send_request and _recv_resp tasks")
 
         await asyncio.gather(*[send_task, recv_task])
