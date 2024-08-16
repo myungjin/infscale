@@ -118,6 +118,7 @@ class Router:
         )
         receiver = TensorReceiver(
             self.world_manager.communicator,
+            world_info.channel,
             world_info.name,
             world_info.other,
             self.device,
@@ -144,6 +145,7 @@ class Router:
         )
         sender = TensorSender(
             self.world_manager.communicator,
+            world_info.channel,
             world_info.name,
             world_info.other,
             self.device,

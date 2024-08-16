@@ -17,6 +17,8 @@
 """Class to keep world information."""
 from dataclasses import dataclass
 
+from infscale.execution.control import Channel
+
 
 @dataclass(frozen=True)
 class WorldInfo:
@@ -29,3 +31,4 @@ class WorldInfo:
     name: str  # world's name
     me: int  # my rank
     other: int  # other peer's rank
+    channel: Channel  # control channel

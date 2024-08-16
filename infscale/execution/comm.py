@@ -15,9 +15,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Communication module."""
+import asyncio
 
 import torch
 from infscale import get_logger
+from infscale.execution.control import Channel
 from torch.distributed.world_communicator import WorldCommunicator
 
 # from https://github.com/SymbioticLab/Oobleck/blob/develop/oobleck/execution/utils.py#L4-L18
@@ -51,12 +53,14 @@ class TensorSender:
     def __init__(
         self,
         communicator: WorldCommunicator,
+        channel: Channel,
         world_name: str,
         rank: int,
         device: torch.device,
     ):
         """Initialize tensor sender instance."""
         self.communicator = communicator
+        self.channel = channel
         self.world_name = world_name
         self.rank = rank  # destination's rank
         self.device = device
@@ -65,6 +69,9 @@ class TensorSender:
         self.seqno = torch.tensor([0], device=self.device, dtype=torch.int64)
 
     async def _send(self, tensor: torch.Tensor) -> None:
+        # to minimize the overhead of busy-waiting by communicator's operations
+        # we coordinate send/recv via control channel
+        await self.channel.sync(self.rank)
         await self.communicator.send(tensor, self.rank, self.world_name)
 
     async def send(self, tensors: tuple[torch.Tensor], seqno: int) -> None:
@@ -99,7 +106,6 @@ class TensorSender:
                 await self._send(t_dtype)
                 await self._send(t_shape)
 
-        logger.debug("calling send")
         if not self.sent_tensor_meta:
             logger.debug("sending tensor meta data")
             # we only send meta data once
@@ -127,12 +133,14 @@ class TensorReceiver:
     def __init__(
         self,
         communicator: WorldCommunicator,
+        channel: Channel,
         world_name: str,
         rank: int,
         device: torch.device,
     ):
         """Initialize communication instance."""
         self.communicator = communicator
+        self.channel = channel
         self.world_name = world_name
         self.rank = rank  # source's rank
         self.device = device
@@ -141,6 +149,9 @@ class TensorReceiver:
         self.seqno = torch.tensor([0], device=self.device, dtype=torch.int64)
 
     async def _recv(self, tensor: torch.Tensor):
+        # to minimize the overhead of busy-waiting by communicator's operations
+        # we coordinate send/recv via control channel
+        await self.channel.sync(self.rank, mode="ack")
         await self.communicator.recv(tensor, self.rank, self.world_name)
 
     async def recv(self) -> tuple[tuple[torch.Tensor], int]:
@@ -186,7 +197,6 @@ class TensorReceiver:
 
             return tuple(tensors)
 
-        logger.debug("calling recv")
         if self.buffer is None:
             logger.debug("creating a recv buffer")
             # allocate buffer once and reuse it

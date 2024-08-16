@@ -22,7 +22,8 @@ import time
 import torch
 import torch.distributed as dist
 from infscale import get_logger
-from infscale.config import ServeConfig
+from infscale.config import ServeConfig, WorkerInfo
+from infscale.execution.control import Channel as CtrlCh
 from infscale.execution.router import Router
 from infscale.execution.stage import Stage
 from infscale.execution.world import WorldInfo
@@ -67,29 +68,74 @@ class Pipeline:
             for wrk_info in v:
                 if my_id == k:
                     my_rank = 0
-                    other_rank = 1
                 elif my_id in wrk_info.peers:
                     my_rank = wrk_info.peers.index(my_id) + 1
-                    other_rank = 0
                 else:
                     continue
 
-                logger.info(
-                    f"initializing world {wrk_info.name} with my rank {my_rank}"
-                )
-                logger.info(f"leader addr={wrk_info.addr}, port={wrk_info.port}")
+                name, addr, port = wrk_info.name, wrk_info.addr, wrk_info.port
+                world_size = len(wrk_info.peers) + 1
+
+                logger.info(f"initializing world {name} with my rank {my_rank}")
+                logger.info(f"leader addr={addr}, port={port}")
                 await self.world_manager.initialize_world(
-                    wrk_info.name,
+                    name,
                     my_rank,
-                    len(wrk_info.peers) + 1,
+                    world_size,
                     backend=self.spec.backend,
-                    addr=wrk_info.addr,
-                    port=wrk_info.port,
+                    addr=addr,
+                    port=port,
                 )
-                data = {"name": wrk_info.name, "me": my_rank, "other": other_rank}
-                world_info = WorldInfo(**data)
-                self.world_info_list.append(world_info)
-                logger.debug(f"done initializing {wrk_info.name}")
+                logger.debug(f"done initializing multiworld {name}")
+
+    async def _initialize_control_channel(self):
+        async def _inner(my_rank: int, other_rank: int, wrk_info: WorkerInfo):
+            name, addr, port = wrk_info.name, wrk_info.addr, wrk_info.port
+            world_size = len(wrk_info.peers) + 1
+
+            # increment port number by 1
+            port = port + 1
+            ctrl_ch = CtrlCh(my_rank, world_size, addr, port)
+            await ctrl_ch.setup()
+            data = {
+                "name": name,
+                "me": my_rank,
+                "other": other_rank,
+                "channel": ctrl_ch,
+            }
+            world_info = WorldInfo(**data)
+            self.world_info_list.append(world_info)
+            logger.debug(f"done initializing control channel for {name}")
+
+        my_id = self.spec.stage.id
+
+        # initialize server first
+        for k, v in self.spec.flow_graph.items():
+            if my_id != k:
+                continue
+
+            my_rank = 0
+            other_rank = 1
+            for wrk_info in v:
+                await _inner(my_rank, other_rank, wrk_info)
+
+        # initialize client next
+        for k, v in self.spec.flow_graph.items():
+            for wrk_info in v:
+                if my_id not in wrk_info.peers:
+                    continue
+
+                my_rank = wrk_info.peers.index(my_id) + 1
+                other_rank = 0
+
+                await _inner(my_rank, other_rank, wrk_info)
+        for world_info in self.world_info_list:
+            await world_info.channel.wait_readiness()
+            logger.info(f"control channel for {world_info.name} is ready")
+
+    async def _initialize_pipeline(self):
+        await self._initialize_multiworld()
+        await self._initialize_control_channel()
 
     def _initialize_worker(self, modelir: ModelIR):
         output_parser = modelir.output_parser if self.spec.stage.is_last else None
@@ -187,7 +233,7 @@ class Pipeline:
 
     async def run(self):
         """Run pipeline."""
-        # initialize multiworld
-        await self._initialize_multiworld()
+        # initialize pipeline
+        await self._initialize_pipeline()
         # run pipeline
         await self._run()
