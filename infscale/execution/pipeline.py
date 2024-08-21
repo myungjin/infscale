@@ -20,7 +20,6 @@ import asyncio
 import time
 
 import torch
-import torch.distributed as dist
 from infscale import get_logger
 from infscale.config import ServeConfig, WorkerInfo
 from infscale.execution.control import Channel as CtrlCh
@@ -29,6 +28,7 @@ from infscale.execution.stage import Stage
 from infscale.execution.world import WorldInfo
 from infscale.module.dataset import HuggingFaceDataset
 from infscale.module.modelir import ModelIR
+from multiworld.manager import WorldManager
 
 logger = get_logger()
 
@@ -45,7 +45,7 @@ class Pipeline:
         """Initialize pipeline instance."""
         self.stage: Stage = None
         self.spec = spec
-        self.world_manager = dist.WorldManager()
+        self.world_manager = WorldManager()
 
         self.device = torch.device(self.spec.device)
 

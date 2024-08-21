@@ -24,7 +24,7 @@ from infscale.config import ServeConfig
 from infscale.execution.comm import TensorReceiver, TensorSender
 from infscale.execution.world import WorldInfo
 from infscale.fwding import random, rr, shortest, static
-from torch.distributed import WorldManager
+from multiworld.manager import WorldManager
 
 DEFAULT_QUEUE_SIZE = 3
 DEFAULT_SLEEP_TIME = 0.1  # 100ms

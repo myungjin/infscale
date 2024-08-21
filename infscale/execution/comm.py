@@ -15,12 +15,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """Communication module."""
-import asyncio
-
 import torch
 from infscale import get_logger
 from infscale.execution.control import Channel
-from torch.distributed.world_communicator import WorldCommunicator
+from multiworld.communicator import WorldCommunicator
 
 # from https://github.com/SymbioticLab/Oobleck/blob/develop/oobleck/execution/utils.py#L4-L18
 ID_TO_DTYPE = [
