@@ -43,10 +43,7 @@ logger = get_logger()
 
 
 class TensorSender:
-    """Tensor sender class.
-
-    This class maintains state related to sending tensors and sends tensors.
-    """
+    """Tensor sender class."""
 
     def __init__(
         self,
@@ -72,49 +69,44 @@ class TensorSender:
         await self.channel.sync(self.rank)
         await self.communicator.send(tensor, self.rank, self.world_name)
 
-    async def send(self, tensors: tuple[torch.Tensor], seqno: int) -> None:
-        """Send tensors to destination rank.
+    async def send(self, tensor: torch.Tensor, seqno: int) -> None:
+        """Send tensor to destination rank.
 
         seqno: the seqno of a tensor; will be used to keep track of tensors
         traversing a pipeline.
         """
 
-        async def _send_tensor_meta(tensors: tuple[torch.Tensor]) -> None:
+        async def _send_tensor_meta(tensor: torch.Tensor) -> None:
             """
             Send meta data for tensor.
 
             sending order of the meta data:
             t_dim -> t_dtype -> t_shape
             """
-            count = torch.tensor([len(tensors)], device=self.device, dtype=torch.int64)
-            await self._send(count)
+            dim = len(tensor.size())
+            t_dim = torch.tensor([dim], device=self.device, dtype=torch.int64)
 
-            for tensor in tensors:
-                dim = len(tensor.size())
-                t_dim = torch.tensor([dim], device=self.device, dtype=torch.int64)
+            dtype = DTYPE_TO_ID[tensor.dtype]
+            t_dtype = torch.tensor([dtype], device=self.device, dtype=torch.int64)
 
-                dtype = DTYPE_TO_ID[tensor.dtype]
-                t_dtype = torch.tensor([dtype], device=self.device, dtype=torch.int64)
+            shape = tensor.size()
+            t_shape = torch.tensor(shape, device=self.device, dtype=torch.int64)
 
-                shape = tensor.size()
-                t_shape = torch.tensor(shape, device=self.device, dtype=torch.int64)
-
-                # TODO: Make send asynchronous
-                await self._send(t_dim)
-                await self._send(t_dtype)
-                await self._send(t_shape)
+            # TODO: Make send asynchronous
+            await self._send(t_dim)
+            await self._send(t_dtype)
+            await self._send(t_shape)
 
         if not self.sent_tensor_meta:
             logger.debug("sending tensor meta data")
             # we only send meta data once
-            await _send_tensor_meta(tensors)
+            await _send_tensor_meta(tensor)
             self.sent_tensor_meta = True
             logger.debug("done tensor meta data tx")
 
-        logger.debug("sending tensors")
-        for tensor in tensors:
-            await self._send(tensor)
-        logger.debug("sent tensors")
+        logger.debug("sending tensor")
+        await self._send(tensor)
+        logger.debug("sent tensor")
 
         self.seqno[0] = seqno
         await self._send(self.seqno)
@@ -152,48 +144,39 @@ class TensorReceiver:
         await self.channel.sync(self.rank, mode="ack")
         await self.communicator.recv(tensor, self.rank, self.world_name)
 
-    async def recv(self) -> tuple[tuple[torch.Tensor], int]:
-        """Receive tensors from source rank.
+    async def recv(self) -> tuple[torch.Tensor, int]:
+        """Receive tensor from source rank.
 
         seqno: the seqno of a tensor; will be used to keep track of tensors
         traversing a pipeline
         """
 
-        async def _create_receive_buffer() -> tuple[torch.Tensor]:
+        async def _create_receive_buffer() -> torch.Tensor:
             """Receive menta data for tensor and return allocated buffer.
 
             receiving order of the meta data:
             t_dim -> t_dtype -> t_shape
             """
-            count = torch.tensor([0], device=self.device, dtype=torch.int64)
-            await self._recv(count)
-            num_tensors = count.item()
-            tensors: list[torch.Tensor] = []
+            t_dim = torch.tensor([0], device=self.device, dtype=torch.int64)
+            await self._recv(t_dim)
+            t_dim = t_dim.item()
 
-            for _ in range(num_tensors):
-                t_dim = torch.tensor([0], device=self.device, dtype=torch.int64)
-                await self._recv(t_dim)
-                t_dim = t_dim.item()
+            t_dtype = torch.tensor([0], device=self.device, dtype=torch.int64)
+            await self._recv(t_dtype)
+            t_dtype = ID_TO_DTYPE[t_dtype.item()]
 
-                t_dtype = torch.tensor([0], device=self.device, dtype=torch.int64)
-                await self._recv(t_dtype)
-                t_dtype = ID_TO_DTYPE[t_dtype.item()]
+            t_shape = torch.tensor([1] * t_dim, device=self.device, dtype=torch.int64)
+            await self._recv(t_shape)
+            t_shape = t_shape.tolist()
 
-                t_shape = torch.tensor(
-                    [1] * t_dim, device=self.device, dtype=torch.int64
-                )
-                await self._recv(t_shape)
-                t_shape = t_shape.tolist()
+            tensor = torch.zeros(
+                t_shape,
+                device=self.device,
+                dtype=t_dtype,
+                requires_grad=False,
+            )
 
-                tensor = torch.zeros(
-                    t_shape,
-                    device=self.device,
-                    dtype=t_dtype,
-                    requires_grad=False,
-                )
-                tensors.append(tensor)
-
-            return tuple(tensors)
+            return tensor
 
         if self.buffer is None:
             logger.debug("creating a recv buffer")
@@ -201,17 +184,14 @@ class TensorReceiver:
             self.buffer = await _create_receive_buffer()
             logger.debug("done recv buffer creation")
 
-        recvd: list[torch.Tensor | None] = [None] * len(self.buffer)
-        for idx, tensor in enumerate(self.buffer):
-            assert torch.is_tensor(tensor)
-            await self._recv(tensor)
-            recvd[idx] = tensor.clone().detach()
+        await self._recv(self.buffer)
+        recvd = self.buffer.clone().detach()
 
         await self._recv(self.seqno)
         seqno = self.seqno.item()
-        logger.debug(f"received tensors of seqno {seqno}")
+        logger.debug(f"received tensor of seqno {seqno}")
 
-        return tuple(recvd), seqno
+        return recvd, seqno
 
     def is_broken(self) -> bool:
         """Check if world is broken or not."""

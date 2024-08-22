@@ -78,8 +78,7 @@ class HuggingFaceDataset:
                 pixel_values = torch.stack(
                     [example["pixel_values"] for example in examples]
                 )
-                labels = torch.tensor([example["label"] for example in examples])
-                return {"pixel_values": pixel_values, "labels": labels}
+                return {"pixel_values": pixel_values}
 
             self.data_collator = collate_fn
 
@@ -100,7 +99,7 @@ class HuggingFaceDataset:
         """Set micro batch size."""
         self.micro_batch_size = micro_batch_size
 
-    def next_batch(self, device: torch.device) -> Union[Tuple[Tensor, Tensor], None]:
+    def next_batch(self, device: torch.device) -> Union[Tensor, None]:
         """Return next data tensor.
 
         Once all the data is consumed, it returns None.
@@ -120,7 +119,8 @@ class HuggingFaceDataset:
             return None
 
         if self.model_group == ModelGroup.IMAGE:
-            return (batch["pixel_values"].to(device), batch["labels"].to(device))
+            return batch["pixel_values"].to(device)
+            # return (batch["pixel_values"].to(device), batch["labels"].to(device))
         else:
             # TODO: implement this later
             raise NotImplementedError

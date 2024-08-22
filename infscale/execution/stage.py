@@ -67,7 +67,7 @@ class Stage(nn.Module):
     def forward(self, inputs: tuple[Tensor]) -> tuple[Tensor]:
         """Run layers in the stage."""
         for layer in self.layers:
-            inputs = layer(*inputs)
+            inputs = layer(inputs)
 
         outputs = self._output_parser(inputs) if self._output_parser else inputs
 
