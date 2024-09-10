@@ -18,12 +18,12 @@
 
 import asyncio
 from dataclasses import dataclass
-from multiprocessing import connection
 
 import grpc
 import torch
 import torch.multiprocessing as mp
 from infscale import get_logger
+from infscale.actor.job_monitor import JobMonitor, WorkerMetaData
 from infscale.actor.worker import Worker
 from infscale.config import JobConfig
 from infscale.constants import GRPC_MAX_MESSAGE_LENGTH, HEART_BEAT_PERIOD
@@ -34,14 +34,6 @@ from infscale.proto import management_pb2_grpc as pb2_grpc
 ENV_CUDA_VIS_DEVS = "CUDA_VISIBLE_DEVICES"
 
 logger = get_logger()
-
-
-@dataclass
-class WorkerMetaData:
-    """WorkerMetaData dataclass."""
-
-    pipe: connection.Connection
-    process: mp.Process
 
 
 class Agent:
@@ -129,8 +121,8 @@ class Agent:
             processes.append(process)
             print(f"Process ID: {process.pid}")
 
-        for p in processes:
-            p.join()
+        job_monitor = JobMonitor(self._workers)
+        job_monitor.start_monitoring()
 
     def configure(self):
         """Configure workers."""

@@ -20,6 +20,7 @@ from multiprocessing.connection import Connection
 from typing import Any
 
 from infscale import get_logger
+from infscale.actor.worker_monitor import WorkerMonitor
 from infscale.config import ServeConfig
 from infscale.execution.pipeline import Pipeline
 from infscale.module.dataset import HuggingFaceDataset
@@ -38,10 +39,10 @@ class Worker:
         self.conn = conn
         self.spec = spec
         logger.info(f"{self.spec}")
-
         self.dataset: HuggingFaceDataset = None
         self.ir: ModelIR = None
-
+        self.worker_monitor = WorkerMonitor(self.conn)
+        self.worker_monitor.send_message(f"I am a running worker")
         self._initialize()
 
     def run(self) -> None:
