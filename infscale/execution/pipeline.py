@@ -52,7 +52,7 @@ class Pipeline:
 
         self.world_info_list: list[WorldInfo] = list()
 
-        if "s" in spec.stage.id:  # it's server
+        if spec.stage.is_server:
             logger.info("I am server and leader")
             self.dataset = dataset
             self._run = self._run_server

@@ -174,7 +174,8 @@ class Stage:
 
     start: int  # start layer number
     end: int  # end layer number
-    id: str  # <stage number>-<replica number>, s: serving server
+    id: str  # <stage number>-<replica number>
+    is_server: bool = False
     is_last: bool = False  # indicate if stage is the last one or not
 
 
