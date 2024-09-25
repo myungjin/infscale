@@ -191,6 +191,12 @@ class Pipeline:
         seqno = -1
         idx = 0
         start_time = None
+        self.worker_monitor.send_message(
+            Message(
+                MessageType.STATUS,
+                WorkerStatus.RUNNING,
+            )
+        )
         while max_count == -1 or max_count > idx:
             logger.debug("waiting for response")
             outputs, seqno = await router.rx_q.get()
@@ -199,13 +205,6 @@ class Pipeline:
             if idx % 100 == 0:
                 if start_time is None:
                     start_time = time.perf_counter()
-
-                self.worker_monitor.send_message(
-                    Message(
-                        MessageType.STATUS,
-                        WorkerStatus.RUNNING,
-                    )
-                )
 
             idx += 1
         end_time = time.perf_counter()
