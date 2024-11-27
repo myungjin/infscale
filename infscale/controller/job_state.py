@@ -26,6 +26,7 @@ from infscale.controller.apiserver import JobAction
 class JobStateEnum(Enum):
     """JobState enum."""
 
+    READY = "ready"
     STARTED = "started"
     STARTING = "starting"
     STOPPED = "stopped"
@@ -35,6 +36,7 @@ class JobStateEnum(Enum):
 
 JOB_ALLOWED_ACTIONS = MappingProxyType(
     {
+        JobStateEnum.READY: (JobAction.START),
         JobStateEnum.STARTED: (JobAction.STOP, JobAction.UPDATE),
         JobStateEnum.STARTING: (JobAction.STOP),
         JobStateEnum.STOPPED: (JobAction.START),
