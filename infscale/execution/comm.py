@@ -168,21 +168,16 @@ class TensorReceiver:
         self._allocate_buffer(ctrl_msg)
 
         # Slice buffers to match actual message shape and receive into sliced views
-        recv_views = {}
+        recvd = {}
         for k, v in self.metas.items():
             msg_shape = v.shape
             slices = tuple(slice(0, size) for size in msg_shape)
-            recv_views[k] = self.buffer[k][slices]
+            recvd[k] = self.buffer[k][slices]
 
-        for _, tensor in recv_views.items():
+        for _, tensor in recvd.items():
             await self.communicator.recv(tensor, self.rank, self.world_name)
 
         seqno = ctrl_msg.seqno
-
-        # Clone tensors to avoid corruption when buffer is reused
-        recvd = {}
-        for k, v in recv_views.items():
-            recvd[k] = v.clone()
 
         return recvd, seqno
 
